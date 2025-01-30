@@ -1,4 +1,4 @@
-import streamlit as st
+import streamlit as st # type: ignore
 from utils.sidebar_menu import sidebar
 import joblib
 import pandas as pd
@@ -8,6 +8,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 import numpy as np
 from utils.helper import preprocess_data
 from sklearn.preprocessing import StandardScaler
+import pickle
 
 # Cache data loading and preprocessing
 @st.cache_data
@@ -42,7 +43,12 @@ if __name__ == "__main__":
         # Cache model loading
         @st.cache_resource
         def load_model(model_path):
-            return joblib.load(model_path)
+            try:
+                return joblib.load(model_path)
+            except (ValueError, TypeError) as e:
+                # Handle numpy random state loading error
+                with open(model_path, 'rb') as f:
+                    return pickle.load(f)
 
         list_of_models = [f for f in os.listdir("models") if f.endswith('.pkl')]
         if not list_of_models:

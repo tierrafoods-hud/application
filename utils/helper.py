@@ -4,7 +4,7 @@ from typing import Optional
 import matplotlib.pyplot as plt
 import seaborn as sns
 import math
-import streamlit as st
+import streamlit as st # type: ignore
 
 def filter_by_country(df: pd.DataFrame, country_name: str) -> Optional[pd.DataFrame]:
     """
@@ -23,7 +23,7 @@ def replace_invalid_dates(date_str, default_start_date=pd.Timestamp('1900-01-01'
     @return A Pandas datetime object with the replaced valid date.
     """
     # Split the date string into components
-    parts = date_str.split('-')
+    parts = str(date_str).split('-')
     
     # Initialize default values for year, month, and day
     year, month, day = random.randint(default_start_date.year, default_end_date.year), random.randint(1, 12), random.randint(1, 28) # ensuring no wrong values for feb
@@ -68,7 +68,7 @@ def plot_distribution_charts(numeric_columns, dataset, title=""):
         axes[j].axis('off')
 
     plt.suptitle(f"Column distribution {title}")
-    plt.show()
+    # plt.show()
 
     return fig
 

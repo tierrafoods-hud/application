@@ -1,4 +1,4 @@
-import streamlit as st
+import streamlit as st # type: ignore
 from utils.sidebar_menu import sidebar
 import pandas as pd
 import geopandas as gpd
@@ -167,20 +167,29 @@ def validate_model(models, features, target, title, save_model=False):
 
 def show():
 
-    col1, col2 = st.columns(2)
-    with col1:
-        # country name
-        country_name = st.text_input("Enter the country name", value=DEFAULT_COUNTRY_NAME)
-    with col2:
-        # file uploader
-        dataset_file = st.file_uploader("Upload the combined data", type=["csv", "gpkg"])
-        if dataset_file is None:
-            dataset_file = DEFAULT_DATA_PATH
+    # country name
+    country_name = st.text_input("Enter the country name", value=DEFAULT_COUNTRY_NAME, help="This is the name of the country/region/title that the dataset belongs to")
+
+    # file uploader
+    dataset_file = st.file_uploader("Upload the combined data", type=["csv", "gpkg"], help="This is the combined dataset of all properties in the country")
+    
+    if dataset_file is not None:
+        with st.spinner('Processing uploaded file...'):
+            if dataset_file.name.endswith('.csv') or dataset_file.name.endswith('.gpkg'):
+                dataset_file = dataset_file
+            else:
+                st.error("Please upload a CSV or GPKG file")
+                st.stop()
+    elif os.path.exists(DEFAULT_DATA_PATH):
+        dataset_file = DEFAULT_DATA_PATH
+    else:
+        st.error("Please upload a dataset")
+        st.stop()
     
     try:
-        if dataset_file.endswith(".csv"):
+        if dataset_file.name.endswith(".csv"):
             df = pd.read_csv(dataset_file)
-        elif dataset_file.endswith(".gpkg"):
+        elif dataset_file.name.endswith(".gpkg"):
             df = gpd.read_file(dataset_file)
         
         df['date'] = df['date'].apply(replace_invalid_dates) # replace invalid dates
@@ -247,42 +256,38 @@ def show():
                 st.error("Please select a target variable")
                 return
 
-            if st.button("Begin Model Training"):
-                # scale and split the dataset
-                scaled_dataset, X_scaled, y = split_and_scale_data(df, target_variable)
+            if st.button("Begin Model Training", type="primary"):
+                with st.spinner("Scaling and splitting the dataset..."):
+                    # scale and split the dataset
+                    scaled_dataset, X_scaled, y = split_and_scale_data(df, target_variable)
 
-                # preview the scaled dataset
-                st.write("""
-                    A preview of the scaled dataset.
-                """)
-                display_table_data(scaled_dataset)
+                    # preview the scaled dataset
+                    st.write("""
+                        A preview of the scaled dataset.
+                    """)
+                    display_table_data(scaled_dataset)
 
-                # # correlation matrix
-                # st.write("""
-                #     A correlation matrix is a table showing the correlation coefficients between pairs of variables.
-                #     This will help you understand the relationship between the target variable and the other variables in the dataset.
-                # """)
-                # plt.figure(figsize=(10, 6))
-                # sns.heatmap(scaled_dataset.corr(), cbar=False, cmap='viridis')
-                # plt.title(f'Correlation matrix for {target_variable}')
-                # st.pyplot(plt)
+                    # validate models
+                    model_title = f"{country_name}_{target_variable}"
+                    validate_model(MODELS_LIST, X_scaled, y, model_title, save_model=True)
 
-                # validate models
-                model_title = f"{country_name}_{target_variable}"
-                validate_model(MODELS_LIST, X_scaled, y, model_title, save_model=True)
-
-                # download the best model
-                with open(f'models/{model_title}_best_model.pkl', 'rb') as f:
-                    st.download_button(label="Download the best model",
-                                     data=f,
-                                     file_name=f'{model_title}_best_model.pkl',
-                                     mime='application/octet-stream')
+            # Move download button outside the training block
+            model_title = f"{country_name}_{target_variable}"
+            model_path = f'models/{model_title}_best_model.pkl'
+            if os.path.exists(model_path):
+                with open(model_path, 'rb') as f:
+                    st.download_button(
+                        label="Download the best model",
+                        data=f,
+                        file_name=f'{model_title}_best_model.pkl',
+                        mime='application/octet-stream'
+                    )
 
     except Exception as e:
         st.error(f"Error loading dataset: {str(e)}")
 
 if __name__ ==  "__main__":
-    sidebar(title="Build Regression Model", layout_style="wide")
+    sidebar(title="Build Regression Model")
 
     with st.expander("About"):
         st.write("""

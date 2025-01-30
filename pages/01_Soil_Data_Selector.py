@@ -160,13 +160,13 @@ def show():
     # Depth Filtering
     col1, col2 = st.columns(2)
     with col1:
-        min_upper_depth = st.number_input("Min Upper Depth (cm)", value=0)
-        max_upper_depth = st.number_input("Max Upper Depth (cm)", value=30)
+        min_upper_depth = st.number_input("Min Upper Depth (cm)", value=0, help="This is the minimum upper depth of soil to filter the data by")
+        max_upper_depth = st.number_input("Max Upper Depth (cm)", value=30, help="This is the maximum upper depth of soil to filter the data by")
     with col2:
-        min_lower_depth = st.number_input("Min Lower Depth (cm)", value=0)
-        max_lower_depth = st.number_input("Max Lower Depth (cm)", value=30)
+        min_lower_depth = st.number_input("Min Lower Depth (cm)", value=0, help="This is the minimum lower depth of soil to filter the data by")
+        max_lower_depth = st.number_input("Max Lower Depth (cm)", value=30, help="This is the maximum lower depth of soil to filter the data by")
 
-    if st.button("Process Data"):
+    if st.button("Process Data", type="primary"):
         try:
             # Validate configuration
             country_name, output_path, bounding_box = validate_config(
@@ -225,36 +225,43 @@ def show():
                 master_df.to_csv(csv_file, index=False)
 
                 ##  FUTURE: Save to Database
-                st.session_state[f"{country_name}_soil_data"] = master_df  ## save to session state to use between pages
+                st.session_state[f"{country_name}_soil_data"] = master_df
+                st.session_state['processed_files'] = {
+                    'gpkg': output_file,
+                    'csv': csv_file,
+                    'country_name': country_name
+                }
                 
                 status_text.success("Processing complete! Download the data below.")
-
-                col1, col2 = st.columns(2)
-                with col1:
-                    # Create download buttons
-                    with open(output_file, 'rb') as f:
-                        gpkg_bytes = f.read()
-                    st.download_button(
-                        label="Download GeoPackage",
-                        data=gpkg_bytes,
-                        file_name=f"{country_name}_wosis_merged.gpkg",
-                        mime="application/geopackage"
-                    )
-                with col2:
-                    with open(csv_file, 'rb') as f:
-                        csv_bytes = f.read()
-                    st.download_button(
-                        label="Download CSV",
-                        data=csv_bytes,
-                        file_name=f"{country_name}_wosis_merged.csv",
-                        mime="text/csv"
-                    )
             else:
                 status_text.warning("No data found for any layers")
 
-
         except Exception as e:
             st.error(f"Error processing data: {str(e)}")
+
+    # Show download buttons outside the process button logic if files are available
+    if 'processed_files' in st.session_state:
+        st.info(f"Download the processed data for {st.session_state['processed_files']['country_name']}.")
+        files = st.session_state['processed_files']
+        col1, col2 = st.columns(2)
+        with col1:
+            with open(files['gpkg'], 'rb') as f:
+                gpkg_bytes = f.read()
+            st.download_button(
+                label="Download GeoPackage",
+                data=gpkg_bytes,
+                file_name=f"{files['country_name']}_wosis_merged.gpkg",
+                mime="application/geopackage"
+            )
+        with col2:
+            with open(files['csv'], 'rb') as f:
+                csv_bytes = f.read()
+            st.download_button(
+                label="Download CSV",
+                data=csv_bytes,
+                file_name=f"{files['country_name']}_wosis_merged.csv",
+                mime="text/csv"
+            )
 
 if __name__ == "__main__":
     # Define constants
