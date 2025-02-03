@@ -39,6 +39,18 @@ def split_and_scale_data(df, target_variable):
 
     # split data into features and target
     drop_columns = [target_variable, 'latitude', 'longitude']
+
+    # Drop the complementary carbon variable to avoid data leakage
+    # This is required to train models without the other value since they are highly correlated
+    if target_variable == 'orgc':
+        drop_columns.append('tceq')
+    elif target_variable == 'tceq':
+        drop_columns.append('orgc')
+
+    # save the features and target variable
+    st.session_state['_features'] = df.drop(columns=drop_columns, errors='ignore')
+    st.session_state['_target'] = df[target_variable]
+
     X = df.drop(columns=drop_columns, errors='ignore') # ignore error if target_variables is not in the dataset
     y = df[target_variable]
 
@@ -63,22 +75,21 @@ def train_model(X_scaled, y, model):
     @param model - The model to train
     @return Tuple of (mse, mae, r2, y_test, y_pred) evaluation metrics and test data
     """
-    with st.spinner('Training model...'):
-        # Split data into training and testing sets
-        X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=TEST_SIZE, random_state=RANDOM_STATE)
+    # Split data into training and testing sets
+    X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=TEST_SIZE, random_state=RANDOM_STATE)
 
-        # Train model and get predictions
-        model.fit(X_train, y_train)
-        y_pred = model.predict(X_test)
-        
-        # Calculate and return all evaluation metrics at once
-        return (
-            mean_squared_error(y_test, y_pred),  # MSE
-            mean_absolute_error(y_test, y_pred),  # MAE 
-            r2_score(y_test, y_pred),            # R2
-            y_test,
-            y_pred
-        )
+    # Train model and get predictions
+    model.fit(X_train, y_train)
+    y_pred = model.predict(X_test)
+    
+    # Calculate and return all evaluation metrics at once
+    return (
+        mean_squared_error(y_test, y_pred),  # MSE
+        mean_absolute_error(y_test, y_pred),  # MAE 
+        r2_score(y_test, y_pred),            # R2
+        y_test,
+        y_pred
+    )
 
 def validate_model(models, features, target, title, save_model=False):
     """
@@ -106,38 +117,39 @@ def validate_model(models, features, target, title, save_model=False):
             status_text.text(f'Training and evaluating {name}...')
             
             # Get evaluation metrics
-            mse, mae, r2, y_test, y_pred = train_model(features, target, model)
+            with st.spinner('Training model...'):
+                mse, mae, r2, y_test, y_pred = train_model(features, target, model)
             
-            # Track best model
-            if mae < best_score:
-                best_model, best_score = model, mae
+                # Track best model
+                if mae < best_score:
+                    best_model, best_score = model, mae
 
-            # Log metrics
-            st.markdown(f"### {name} metrics:\n"
-                      f"- MSE: {mse:.4f}\n"
-                      f"- MAE: {mae:.4f}\n"
-                      f"- R2: {r2:.4f}")
-            
-            # plot individual model
-            plt.figure(figsize=(10, 6))
-            plt.scatter(y_test, y_pred, alpha=0.7, edgecolors='k')
-            plt.plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--')
-            plt.title(f'{name}\n(MSE: {mse:.4f}, MAE: {mae:.4f}, R2: {r2:.4f})', fontsize=10)
-            plt.xlabel('Actual')
-            plt.ylabel('Predicted')
-            st.pyplot(plt)
-            plt.close()
+                # Log metrics
+                st.markdown(f"### {name} metrics:\n"
+                        f"- MSE: {mse:.4f}\n"
+                        f"- MAE: {mae:.4f}\n"
+                        f"- R2: {r2:.4f}")
+                
+                # plot individual model
+                plt.figure(figsize=(10, 6))
+                plt.scatter(y_test, y_pred, alpha=0.7, edgecolors='k')
+                plt.plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--')
+                plt.title(f'{name}\n(MSE: {mse:.4f}, MAE: {mae:.4f}, R2: {r2:.4f})', fontsize=10)
+                plt.xlabel('Actual')
+                plt.ylabel('Predicted')
+                st.pyplot(plt)
+                plt.close()
 
-            # Plot predictions vs actuals
-            ax = axes[i]
-            ax.scatter(y_test, y_pred, alpha=0.7, edgecolors='k')
-            ax.plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--')
-            ax.set_title(f'{name}\n(MSE: {mse:.4f}, MAE: {mae:.4f}, R2: {r2:.4f})', fontsize=10)
-            ax.set_xlabel('Actual')
-            ax.set_ylabel('Predicted')
+                # Plot predictions vs actuals
+                ax = axes[i]
+                ax.scatter(y_test, y_pred, alpha=0.7, edgecolors='k')
+                ax.plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--')
+                ax.set_title(f'{name}\n(MSE: {mse:.4f}, MAE: {mae:.4f}, R2: {r2:.4f})', fontsize=10)
+                ax.set_xlabel('Actual')
+                ax.set_ylabel('Predicted')
 
-            # Update progress
-            progress_bar.progress((i + 1) / len(models))
+                # Update progress
+                progress_bar.progress((i + 1) / len(models))
 
         # Save best model if requested
         if save_model and best_model:
@@ -146,7 +158,9 @@ def validate_model(models, features, target, title, save_model=False):
             model_path = f'models/{title}_best_model.pkl'
             st.session_state[title] = best_model
             joblib.dump(best_model, model_path)
+            # save the features and target variable
             st.success(f"Best model saved to: {model_path}")
+
 
         # Finalize and show plot
         plt.suptitle(f'Model Performance Comparison for {title}')
@@ -198,7 +212,7 @@ def show():
 
         with tab1:
             st.subheader(f"Dataset for {country_name}")
-            display_table_data(df)
+            st.dataframe(df)
 
             # plot missing values
             st.write("""
@@ -265,7 +279,7 @@ def show():
                     st.write("""
                         A preview of the scaled dataset.
                     """)
-                    display_table_data(scaled_dataset)
+                    st.dataframe(scaled_dataset)
 
                     # validate models
                     model_title = f"{country_name}_{target_variable}"

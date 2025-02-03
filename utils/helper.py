@@ -5,10 +5,11 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import math
 import streamlit as st # type: ignore
+import folium
+from folium.plugins import HeatMap
 
 def filter_by_country(df: pd.DataFrame, country_name: str) -> Optional[pd.DataFrame]:
     """
-
     Filter a DataFrame by a specific country name.
     @param df - The pandas DataFrame to filter.
     @param country_name - The name of the country to filter by.
@@ -144,3 +145,41 @@ def preprocess_data(df):
         missing_count = df.isnull().sum().sum()
 
     return df
+
+def folium_map(data, target_column, zoom_start=4):
+    """
+    Create a folium map with a heatmap based on the given data and target column.
+    @param data - The dataset containing latitude, longitude, and target column values.
+    @param target_column - The column in the dataset to be used for the heatmap.
+    @return A folium map with a heatmap based on the provided data.
+    """
+    # Ensure latitude and longitude columns are numeric and handle non-numeric values
+    data['latitude'] = pd.to_numeric(data['latitude'], errors='coerce')
+    data['longitude'] = pd.to_numeric(data['longitude'], errors='coerce')
+    data[target_column] = pd.to_numeric(data[target_column], errors='coerce')
+
+    # Drop rows with NaN values in latitude, longitude, or target_column
+    data = data.dropna(subset=['latitude', 'longitude', target_column])
+
+    # Check if the filtered dataset is empty
+    if len(data) == 0:
+        st.warning("No valid data points available for the map visualization.")
+        # Return a default map centered on (0, 0)
+        return folium.Map(location=[0, 0], zoom_start=2)
+
+    centroid_lat = data['latitude'].mean()
+    centroid_lon = data['longitude'].mean()
+    map = folium.Map(location=[centroid_lat, centroid_lon], zoom_start=zoom_start)
+
+    # Prepare data for the HeatMap plugin
+    heat_data = [[row['latitude'], row['longitude'], row[target_column]] for index, row in data.iterrows()]
+
+    # Add the HeatMap plugin to the map
+    HeatMap(heat_data, 
+            radius=3, 
+            blur=2, 
+            max_zoom=1,
+            min_opacity=0.5,
+            max_opacity=0.8).add_to(map)
+
+    return map
