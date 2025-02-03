@@ -50,3 +50,23 @@ def get_cell_bounds(grid_cell_id, cell_size=500):
     maxy = miny + cell_size
     
     return (minx, miny, maxx, maxy)
+
+
+def get_grid_cell_dataset(df, latitude='latitude', longitude='longitude', cell_size=500):
+    """
+    helper function to take as input a dataset and return a new dataset with the grid cell id
+
+    Parameters:
+    df (pandas.DataFrame): Input dataset
+    latitude (str): Name of the column with latitude values
+    longitude (str): Name of the column with longitude values
+    cell_size (float): Size of grid cells in meters (default 500)
+
+    Returns:
+    pandas.DataFrame: Input dataset with the grid cell id
+        cell_id are tuples (row_id, col_id) identifying the grid cell
+    """
+    # Get grid cell ID for each point
+    df['cell_id'] = df.apply(lambda x: get_grid_cell(x[latitude], x[longitude], cell_size), axis=1)
+    
+    return df
