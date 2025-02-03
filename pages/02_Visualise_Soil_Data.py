@@ -4,14 +4,10 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import geopandas as gpd
 import pandas as pd
-from utils.helper import plot_distribution_charts, replace_invalid_dates
+from utils.helper import plot_distribution_charts, replace_invalid_dates, folium_map
 import os
 from datetime import datetime
 from utils.grids import get_grid_cell
-from shapely.geometry import Point, MultiPoint
-import folium
-from folium.plugins import HeatMap
-import numpy as np
 
 global DATASET
 
@@ -112,44 +108,6 @@ def timeseries_analysis(data, filters):
         st.warning("Date column not found in the dataset. Cannot conduct timeseries analysis.")
 
     return dataset
-
-def folium_map(data, target_column):
-    """
-    Create a folium map with a heatmap based on the given data and target column.
-    @param data - The dataset containing latitude, longitude, and target column values.
-    @param target_column - The column in the dataset to be used for the heatmap.
-    @return A folium map with a heatmap based on the provided data.
-    """
-    # Ensure latitude and longitude columns are numeric and handle non-numeric values
-    data['latitude'] = pd.to_numeric(data['latitude'], errors='coerce')
-    data['longitude'] = pd.to_numeric(data['longitude'], errors='coerce')
-    data[target_column] = pd.to_numeric(data[target_column], errors='coerce')
-
-    # Drop rows with NaN values in latitude, longitude, or target_column
-    data = data.dropna(subset=['latitude', 'longitude', target_column])
-
-    # Check if the filtered dataset is empty
-    if len(data) == 0:
-        st.warning("No valid data points available for the map visualization.")
-        # Return a default map centered on (0, 0)
-        return folium.Map(location=[0, 0], zoom_start=2)
-
-    centroid_lat = data['latitude'].mean()
-    centroid_lon = data['longitude'].mean()
-    map = folium.Map(location=[centroid_lat, centroid_lon], zoom_start=4)
-
-    # Prepare data for the HeatMap plugin
-    heat_data = [[row['latitude'], row['longitude'], row[target_column]] for index, row in data.iterrows()]
-
-    # Add the HeatMap plugin to the map
-    HeatMap(heat_data, 
-            radius=3, 
-            blur=2, 
-            max_zoom=1,
-            min_opacity=0.5,
-            max_opacity=0.8).add_to(map)
-
-    return map
 
 @st.cache_data
 def create_grids(data, cell_size=1000):
