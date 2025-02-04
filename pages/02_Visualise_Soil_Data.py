@@ -287,7 +287,7 @@ def show():
             st.subheader("Hotspot and Coldspot Analysis")
             with st.spinner("Conducting hotspot and coldspot analysis..."):
                 country_map = None
-                map_file_path = f"utils/maps/{country_name.lower()}/{country_name.lower()}.geojson"
+                map_file_path = f"assets/maps/{country_name.lower()}/{country_name.lower()}.geojson"
                 if os.path.exists(map_file_path):
                     country_map = gpd.read_file(map_file_path)
                 else:

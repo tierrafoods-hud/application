@@ -2,12 +2,9 @@ import streamlit as st # type: ignore
 from utils.sidebar_menu import sidebar
 import pandas as pd
 import geopandas as gpd
-from utils.display_table import display_table_data
 from utils.helper import plot_distribution_charts, replace_invalid_dates, preprocess_data
 import matplotlib.pyplot as plt
 import seaborn as sns
-import numpy as np
-from scipy import stats
 import joblib
 import os
 
@@ -18,6 +15,12 @@ from sklearn.neighbors import KNeighborsRegressor
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+# migration file for models table
+from config.database import get_db
+from dotenv import load_dotenv
+import json
+
+load_dotenv()
 
 @st.cache_data(ttl=600)
 def split_and_scale_data(df, target_variable):
@@ -57,6 +60,8 @@ def split_and_scale_data(df, target_variable):
     # scale data
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
+    # save the scalar
+    st.session_state['_scaler'] = scaler
 
     # create scaled dataset
     scaled_dataset = pd.DataFrame(X_scaled, columns=df.select_dtypes(include=['number']).columns.drop(drop_columns))
@@ -66,6 +71,31 @@ def split_and_scale_data(df, target_variable):
     st.session_state[f'{target_variable}_scaled_dataset'] = scaled_dataset
 
     return scaled_dataset, X_scaled, y
+
+@st.cache_data(ttl=600)
+def save_model_to_db(title, model_type, features, target, scaler, metrics, model_path):
+    """
+    Save model metadata to database
+    """
+    model_data = {
+        'title': title,
+        'model_type': model_type,
+        'features': features.columns.tolist(),
+        'target': target.name,
+        'scaler': scaler,
+        'metrics': metrics,
+        'path': model_path
+    }
+    
+    query = """
+    INSERT INTO models (title, model_type, features, target, scaler, metrics, path) 
+    VALUES (%(title)s, %(model_type)s, %(features)s, %(target)s, %(scaler)s, %(metrics)s, %(path)s)
+    """
+    model_data['features'] = json.dumps(model_data['features'])
+    model_data['metrics'] = json.dumps(model_data['metrics'])
+    DB.create(query, model_data)
+    return model_data
+
 
 def train_model(X_scaled, y, model):
     """
@@ -83,13 +113,13 @@ def train_model(X_scaled, y, model):
     y_pred = model.predict(X_test)
     
     # Calculate and return all evaluation metrics at once
-    return (
-        mean_squared_error(y_test, y_pred),  # MSE
-        mean_absolute_error(y_test, y_pred),  # MAE 
-        r2_score(y_test, y_pred),            # R2
-        y_test,
-        y_pred
-    )
+    metrics = {
+        'mse': mean_squared_error(y_test, y_pred),
+        'mae': mean_absolute_error(y_test, y_pred),
+        'r2': r2_score(y_test, y_pred)
+    }
+    
+    return metrics, y_test, y_pred
 
 def validate_model(models, features, target, title, save_model=False):
     """
@@ -107,6 +137,7 @@ def validate_model(models, features, target, title, save_model=False):
         status_text = st.empty()
 
         best_model = None
+        best_model_type = None
         best_score = float('inf')
 
         # Create subplot grid
@@ -116,40 +147,40 @@ def validate_model(models, features, target, title, save_model=False):
         for i, (name, model) in enumerate(models.items()):
             status_text.text(f'Training and evaluating {name}...')
             
-            # Get evaluation metrics
-            with st.spinner('Training model...'):
-                mse, mae, r2, y_test, y_pred = train_model(features, target, model)
+            metrics, y_test, y_pred = train_model(features, target, model)
             
-                # Track best model
-                if mae < best_score:
-                    best_model, best_score = model, mae
+            # Track best model
+            if metrics['mae'] < best_score:
+                best_model = model
+                best_model_type = name
+                best_score = metrics['mae']
 
-                # Log metrics
-                st.markdown(f"### {name} metrics:\n"
-                        f"- MSE: {mse:.4f}\n"
-                        f"- MAE: {mae:.4f}\n"
-                        f"- R2: {r2:.4f}")
-                
-                # plot individual model
-                plt.figure(figsize=(10, 6))
-                plt.scatter(y_test, y_pred, alpha=0.7, edgecolors='k')
-                plt.plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--')
-                plt.title(f'{name}\n(MSE: {mse:.4f}, MAE: {mae:.4f}, R2: {r2:.4f})', fontsize=10)
-                plt.xlabel('Actual')
-                plt.ylabel('Predicted')
-                st.pyplot(plt)
-                plt.close()
+            # Log metrics
+            st.markdown(f"### {name} metrics:\n"
+                    f"- MSE: {metrics['mse']:.4f}\n"
+                    f"- MAE: {metrics['mae']:.4f}\n"
+                    f"- R2: {metrics['r2']:.4f}")
+            
+            # plot individual model
+            plt.figure(figsize=(10, 6))
+            plt.scatter(y_test, y_pred, alpha=0.7, edgecolors='k')
+            plt.plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--')
+            plt.title(f'{name}\n(MSE: {metrics["mse"]:.4f}, MAE: {metrics["mae"]:.4f}, R2: {metrics["r2"]:.4f})', fontsize=10)
+            plt.xlabel('Actual')
+            plt.ylabel('Predicted')
+            st.pyplot(plt)
+            plt.close()
 
-                # Plot predictions vs actuals
-                ax = axes[i]
-                ax.scatter(y_test, y_pred, alpha=0.7, edgecolors='k')
-                ax.plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--')
-                ax.set_title(f'{name}\n(MSE: {mse:.4f}, MAE: {mae:.4f}, R2: {r2:.4f})', fontsize=10)
-                ax.set_xlabel('Actual')
-                ax.set_ylabel('Predicted')
+            # Plot predictions vs actuals
+            ax = axes[i]
+            ax.scatter(y_test, y_pred, alpha=0.7, edgecolors='k')
+            ax.plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--')
+            ax.set_title(f'{name}\n(MSE: {metrics["mse"]:.4f}, MAE: {metrics["mae"]:.4f}, R2: {metrics["r2"]:.4f})', fontsize=10)
+            ax.set_xlabel('Actual')
+            ax.set_ylabel('Predicted')
 
-                # Update progress
-                progress_bar.progress((i + 1) / len(models))
+            # Update progress
+            progress_bar.progress((i + 1) / len(models))
 
         # Save best model if requested
         if save_model and best_model:
@@ -158,9 +189,34 @@ def validate_model(models, features, target, title, save_model=False):
             model_path = f'models/{title}_best_model.pkl'
             st.session_state[title] = best_model
             joblib.dump(best_model, model_path)
-            # save the features and target variable
-            st.success(f"Best model saved to: {model_path}")
 
+            # save the scalar to storage
+            scalar_path = f'models/{title}_scaler.pkl'
+            joblib.dump(st.session_state['_scaler'], scalar_path)
+            
+            # Save model metadata to database
+            model_data = save_model_to_db(
+                title,
+                best_model_type,
+                st.session_state['_features'],
+                st.session_state['_target'],
+                scalar_path,
+                metrics,
+                model_path
+
+
+            )
+            
+            st.success(f"Best model saved to: {model_path} and database")
+            
+            # Add download button
+            with open(model_path, 'rb') as f:
+                st.download_button(
+                    label="Download the best model",
+                    data=f,
+                    file_name=f'{title}_best_model.pkl',
+                    mime='application/octet-stream'
+                )
 
         # Finalize and show plot
         plt.suptitle(f'Model Performance Comparison for {title}')
@@ -180,10 +236,8 @@ def validate_model(models, features, target, title, save_model=False):
         return best_model
 
 def show():
-
     # country name
-    country_name = st.text_input("Enter the country name", value=DEFAULT_COUNTRY_NAME, help="This is the name of the country/region/title that the dataset belongs to")
-
+    country_name = st.text_input("Enter the title of the dataset", value=DEFAULT_COUNTRY_NAME, help="This is the name of the country/region/title that the dataset belongs to")
     # file uploader
     dataset_file = st.file_uploader("Upload the combined data", type=["csv", "gpkg"], help="This is the combined dataset of all properties in the country")
     
@@ -201,101 +255,125 @@ def show():
         st.stop()
     
     try:
-        if dataset_file.name.endswith(".csv"):
-            df = pd.read_csv(dataset_file)
-        elif dataset_file.name.endswith(".gpkg"):
-            df = gpd.read_file(dataset_file)
-        
-        df['date'] = df['date'].apply(replace_invalid_dates) # replace invalid dates
-            
-        tab1, tab2 = st.tabs(["Preprocessing Analysis", "Model Configuration"])
+        # if string, then it is a file path
+        if isinstance(dataset_file, str):
+            if dataset_file.endswith(".csv"):
+                df = pd.read_csv(dataset_file)
+            elif dataset_file.endswith(".gpkg"):
+                df = gpd.read_file(dataset_file)
+        elif 'name' in dataset_file:
+            if dataset_file.name.endswith(".csv"):
+                df = pd.read_csv(dataset_file)
+            elif dataset_file.name.endswith(".gpkg"):
+                df = gpd.read_file(dataset_file)
+        else:
+            st.error("Please upload a valid dataset")
+            st.stop()
 
-        with tab1:
+        # replace invalid dates
+        df['date'] = df['date'].apply(replace_invalid_dates)
+
+        ######### SECTION 1: PREPROCESSING ANALYSIS #########
+        st.header("Preprocessing Analysis")
+        with st.spinner("Processing dataset..."):
             st.subheader(f"Dataset for {country_name}")
             st.dataframe(df)
 
-            # plot missing values
-            st.write("""
-                An illustration of missing values in the dataset. This will help you understand the viability of the dataset for model training and also give you and idea
-                     if the dataset is clean or not. For an optimal model, the dataset should have minimal missing values.
-            """)
-            plt.figure(figsize=(10, 6))
-            sns.heatmap(df.isnull(), cbar=False, cmap='viridis')
-            plt.title(f'Missing values in the {country_name} dataset')
-            st.pyplot(plt)
+            with st.spinner("Plotting missing values..."):
+                # plot missing values
+                st.write("""
+                    An illustration of missing values in the dataset. This will help you understand the viability of the dataset for model training and also give you and idea
+                            if the dataset is clean or not. For an optimal model, the dataset should have minimal missing values.
+                """)
+                plt.figure(figsize=(10, 6))
+                missing_values = df.isnull().sum()
+                plt.bar(range(len(missing_values)), missing_values)
+                plt.xticks(range(len(missing_values)), missing_values.index, rotation=45, ha='right')
+                plt.title(f'Missing values in the {country_name} dataset')
+                plt.ylabel('Number of missing values')
+                plt.tight_layout()
+                st.pyplot(plt)
 
-            # remove missing values
-            st.subheader("Preprocessing")
-            df = preprocess_data(df)
-            if df is not None:
-                st.success(f"Preprocessing complete!\n"
-                f"Final dataset shape: {df.shape[0]} rows × {df.shape[1]} columns")
-            
-            # plot distribution charts
+            with st.spinner("Removing missing values..."):
+                df = preprocess_data(df)
+                if df is not None:
+                    st.success(f"Preprocessing complete!\n"
+                    f"Final dataset shape: {df.shape[0]} rows × {df.shape[1]} columns")
+                
+                with st.expander("Learn more about the preprocessing steps"):
+                    st.write("""
+                        ### Preprocessing Steps
+                        
+                        The preprocessing steps are as follows:
+                        
+                        - Replace invalid dates with random valid dates within a specified range
+                        - Remove non-numeric columns
+                        - Drop the complementary carbon variable to avoid data leakage
+                        - Scale the data using StandardScaler
+                        - Split the data into features and target variables
+                        - Save the processed dataset in the session state
+                        - Save the features and target variable in the session state
+                        - Return the scaled dataset, features, and target variable
+
+                    """)
+        
+        ######### SECTION 2: DISTRIBUTION ANALYSIS #########
+        st.header("Distribution Analysis")
+        with st.spinner("Plotting distribution charts..."):
             st.write("""
                 An illustration of the distribution of numeric columns in the dataset. Viewing the distribution helps:
+
                 - Identify if variables follow normal/skewed distributions
                 - Detect potential outliers or unusual patterns
                 - Understand the range and spread of values
                 - Determine if data transformations may be needed for modeling
                 - Ensure the data is suitable for the chosen regression models
             """)
-            fig = plot_distribution_charts(df.select_dtypes(include=['number']).columns, df, "Distribution of numeric columns")
-            st.pyplot(fig)
 
-        with tab2:
-            st.subheader("Model Configuration")
-            with st.expander("Instructions"):
-                st.write("""
-                    ### Model Training Instructions
-                    
-                    Select a target variable to predict:
-                    
-                    - Multiple regression models will be trained and evaluated (Random Forest, Gradient Boosting, etc.)
-                    - The remaining variables in the dataset will be used as predictors/features
-                    - The best performing model will be automatically selected based on validation metrics
-                    - You'll see detailed model performance metrics and feature importance analysis
-                    - The optimal model will be saved for future predictions
-                    
-                    __Recommended target variables:__ soil properties like organic carbon (orgc) or total carbon equivalent (tceq)
-                    
-                    __Note:__ Ensure your dataset has sufficient samples and minimal missing values for reliable model training.
-                    """)
-            
-            target_variable = st.selectbox("Select the target variable", 
-                                            options=df.columns, 
-                                            index=df.columns.get_loc("orgc") if "orgc" in df.columns else 0,
-                                            help="Select the target variable to predict")
-            if target_variable is None:
-                st.error("Please select a target variable")
-                return
+            with st.spinner("Plotting distribution charts..."):
+                fig = plot_distribution_charts(df.select_dtypes(include=['number']).columns, df, "Distribution of numeric columns")
+                st.pyplot(fig)
 
-            if st.button("Begin Model Training", type="primary"):
-                with st.spinner("Scaling and splitting the dataset..."):
-                    # scale and split the dataset
-                    scaled_dataset, X_scaled, y = split_and_scale_data(df, target_variable)
+        ######### SECTION 3: MODEL CONFIGURATION #########
+        st.header("Build Regression Model")
+        with st.expander("Instructions"):
+            st.write("""
+                ### Model Training Instructions
+                
+                Select a target variable to predict:
+                
+                - Multiple regression models will be trained and evaluated (Random Forest, Gradient Boosting, etc.)
+                - The remaining variables in the dataset will be used as predictors/features
+                - The best performing model will be automatically selected based on validation metrics
+                - You'll see detailed model performance metrics and feature importance analysis
+                - The optimal model will be saved for future predictions
+                
+                __Recommended target variable:__ soil properties like organic carbon (orgc) or total carbon equivalent (tceq)
+                
+                __Note:__ Ensure your dataset has sufficient samples and minimal missing values for reliable model training.
+                """)
+        
+        target_variable = st.selectbox("Select the target variable", 
+                                        options=df.columns, 
+                                        index=df.columns.get_loc("orgc") if "orgc" in df.columns else 0,
+                                        help="Select the target variable to predict")
+        if target_variable is None:
+            st.error("Please select a target variable")
+            st.stop()
 
-                    # preview the scaled dataset
-                    st.write("""
-                        A preview of the scaled dataset.
-                    """)
-                    st.dataframe(scaled_dataset)
+        if st.button("Begin Model Training", type="primary"):
+            # scale and split the dataset
+            scaled_dataset, X_scaled, y = split_and_scale_data(df, target_variable)
 
-                    # validate models
-                    model_title = f"{country_name}_{target_variable}"
-                    validate_model(MODELS_LIST, X_scaled, y, model_title, save_model=True)
+            # preview the scaled dataset
+            st.write("""
+                A preview of the scaled dataset.
+            """)
+            st.dataframe(scaled_dataset)
 
-            # Move download button outside the training block
+            # validate models
             model_title = f"{country_name}_{target_variable}"
-            model_path = f'models/{model_title}_best_model.pkl'
-            if os.path.exists(model_path):
-                with open(model_path, 'rb') as f:
-                    st.download_button(
-                        label="Download the best model",
-                        data=f,
-                        file_name=f'{model_title}_best_model.pkl',
-                        mime='application/octet-stream'
-                    )
+            validate_model(MODELS_LIST, X_scaled, y, model_title, save_model=True)
 
     except Exception as e:
         st.error(f"Error loading dataset: {str(e)}")
@@ -326,5 +404,9 @@ if __name__ ==  "__main__":
     # create required folders
     os.makedirs("outputs", exist_ok=True)
     os.makedirs("models", exist_ok=True)
+    
+    # database
+    db_type = os.getenv('DB_TYPE')
+    DB = get_db(db_type)
 
     show()

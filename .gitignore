@@ -4,3 +4,4 @@
 /outputs/
 /test_models/
 __pycache__/
+.env

@@ -68,9 +68,6 @@ def plot_distribution_charts(numeric_columns, dataset, title=""):
     for j in range(i + 1, len(axes)):
         axes[j].axis('off')
 
-    plt.suptitle(f"Column distribution {title}")
-    # plt.show()
-
     return fig
 
 
@@ -175,11 +172,9 @@ def folium_map(data, target_column, zoom_start=4):
     heat_data = [[row['latitude'], row['longitude'], row[target_column]] for index, row in data.iterrows()]
 
     # Add the HeatMap plugin to the map
-    HeatMap(heat_data, 
-            radius=3, 
-            blur=2, 
-            max_zoom=1,
-            min_opacity=0.5,
-            max_opacity=0.8).add_to(map)
+    HeatMap(heat_data,
+            min_opacity=0.05,
+            max_opacity=0.9).add_to(map)
+
 
     return map
