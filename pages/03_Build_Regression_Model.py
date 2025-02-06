@@ -261,10 +261,11 @@ def show():
                 df = pd.read_csv(dataset_file)
             elif dataset_file.endswith(".gpkg"):
                 df = gpd.read_file(dataset_file)
-        elif 'name' in dataset_file:
+        elif dataset_file.name:
             if dataset_file.name.endswith(".csv"):
                 df = pd.read_csv(dataset_file)
             elif dataset_file.name.endswith(".gpkg"):
+
                 df = gpd.read_file(dataset_file)
         else:
             st.error("Please upload a valid dataset")

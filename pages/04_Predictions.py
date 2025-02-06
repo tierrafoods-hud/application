@@ -66,10 +66,16 @@ def preprocess_data(dataset, model_features):
             organic_matter=organic_matter,
             bulk_density=1.62 - 0.06 * organic_matter
         )
+    else:
+        dataset = dataset.assign(
+            organic_matter=1.724,
+            bulk_density=1.62
+        )
 
     # check if the dataset has the same columns as the training dataset
     missing_cols = set(model_features) - set(dataset.columns)
     if missing_cols:
+
         st.error(f"The dataset is missing the following columns: {', '.join(missing_cols)}")
     
     # check date in the dataset
@@ -138,7 +144,8 @@ def show():
             model_target = selected_model['target']
             predicted_column = f'{model_target}_predicted'
 
-            st.write(f"Selected model: {selected_model['model_type']} - {selected_model['title']}")
+            st.write(f"Selected model: {selected_model['title']}")
+            st.write(f"{selected_model['description']}")
             # Upload a test dataset
             st.write(f"The test dataset should have the same columns as the training dataset: \n{', '.join(model_features)}")
             st.write(f"Predictions will be made for {model_target} column")
@@ -163,8 +170,17 @@ def show():
 
                     # make predictions
                     X = dataset[model_features] #  use prediction features
+
+                    # check if dataset has missing values
+                    if X.isnull().any().any():
+                        # Get columns with missing values
+                        missing_cols = X.columns[X.isnull().any()].tolist()
+                        st.error(f"The dataset has missing values in the following columns: {', '.join(missing_cols)}. Please check the dataset and try again.")
+                        return
+
                     X_scaled = scaler.transform(X)
                     predictions = model.predict(X_scaled)
+
 
                     # add predictions to the dataset
                     dataset[predicted_column] = predictions
@@ -202,9 +218,14 @@ def show():
 
                     col1, col2 = st.columns(2, gap="small", vertical_alignment="bottom")
                     with col1:
-                        soil_depth = st.selectbox("Select depth profile", soil_ranges)
+                        aggregate = st.checkbox("Aggregate", help="Aggregate the predictions by latitude and longitude ignoring the upper and lower depths", value=True)
                     with col2:
-                        aggregate = st.checkbox("Aggregate", help="Aggregate the predictions by latitude and longitude ignoring the upper and lower depths")
+                        if not aggregate:
+                            col1, col2 = st.columns(2, gap="small", vertical_alignment="bottom")
+                            with col1:
+                                upper_depth = st.number_input("Upper depth (in cm)", min_value=0, max_value=100, value=5)
+                            with col2:
+                                lower_depth = st.number_input("Lower depth (in cm)", min_value=0, max_value=100, value=15)
 
                     spatial_dataset = dataset.copy()
 
@@ -218,9 +239,8 @@ def show():
 
                     else:
                         # filter the dataset by the selected upper and lower depths
-                        upper_depth = int(soil_depth.split('-')[0])
-
-                        lower_depth = int(soil_depth.split('-')[1][:-2])  # Remove 'cm' suffix
+                        # upper_depth = int(soil_depth.split('-')[0])
+                        # lower_depth = int(soil_depth.split('-')[1][:-2])  # Remove 'cm' suffix
 
                         spatial_dataset = spatial_dataset[spatial_dataset['upper_depth'] == upper_depth]
                         spatial_dataset = spatial_dataset[spatial_dataset['lower_depth'] == lower_depth]
