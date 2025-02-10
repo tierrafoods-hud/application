@@ -144,13 +144,30 @@ def show():
             model_target = selected_model['target']
             predicted_column = f'{model_target}_predicted'
 
+            col_names = ['date', 'latitude', 'longitude']
+            col_names.extend(model_features)
+
             st.write(f"Selected model: {selected_model['title']}")
-            st.write(f"{selected_model['description']}")
+            if selected_model['description'] is not None:
+                st.write(f"{selected_model['description']}")
             # Upload a test dataset
-            st.write(f"The test dataset should have the same columns as the training dataset: \n{', '.join(model_features)}")
-            st.write(f"Predictions will be made for {model_target} column")
+            st.write(f"The test dataset should have the following columns: \n{', '.join(col_names)}.")
+            st.write("You can download a template dataset from the link below:")
+            
+            with open('assets/templates/test_dataset_template.csv', 'rb') as f:
+                csv_bytes = f.read()
+            
+                st.download_button(
+                    label="Dataset Template",
+                    data=csv_bytes,
+                    file_name=f"test_dataset_template.csv",
+                    mime="text/csv"
+                )
+
+
             uploaded_file = st.file_uploader("Upload a test dataset", type=["csv", "xlsx"])
             if uploaded_file:
+
 
                 st.write(f"Uploaded file: {uploaded_file.name}")
                 try:
@@ -273,23 +290,23 @@ def show():
                         st.write("Points of the dataset")
                         st.components.v1.html(map2._repr_html_(), height=450)
                     
-                    with st.spinner("Generating grids..."):
+                    # with st.spinner("Generating grids..."):
                         # generate grids dataframe
-                        df_with_grids = init_grids(dataset)                    
+                        # df_with_grids = init_grids(dataset)                    
                         # st.dataframe(df_with_grids)
 
                         # Calculate mean predicted value for each grid cell
-                        grid_means = df_with_grids.groupby('cell_id')[f'{model_target}_predicted'].mean()
+                        # grid_means = df_with_grids.groupby('cell_id')[f'{model_target}_predicted'].mean()
                         
                         # Create color mapping using a colormap
-                        norm = plt.Normalize(grid_means.min(), grid_means.max())
-                        cmap = plt.cm.YlOrRd  # Yellow-Orange-Red colormap
+                        # norm = plt.Normalize(grid_means.min(), grid_means.max())
+                        # cmap = plt.cm.YlOrRd  # Yellow-Orange-Red colormap
                         
                         # Create dictionary mapping cell_ids to colors based on predicted values
-                        cell_data = {cell_id: cmap(norm(value)) for cell_id, value in grid_means.items()}
+                        # cell_data = {cell_id: cmap(norm(value)) for cell_id, value in grid_means.items()}
 
-                        fig, ax = project_grids(DEFAULT_COUNTRY, cell_data)
-                        st.pyplot(fig)
+                        # fig, ax = project_grids(DEFAULT_COUNTRY, cell_data)
+                        # st.pyplot(fig)
 
                 except Exception as e:
 

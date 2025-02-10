@@ -335,8 +335,9 @@ if __name__ ==  "__main__":
     DEFAULT_COUNTRY_COLUMN = "country_name"
     DEFAULT_COUNTRY_NAME = "Mexico"
     DEFAULT_BOUNDING_BOX = [-117.12776, 14.5388286402, -86.811982388, 32.72083]
-    WORLD_MAP = "utils/maps/world/World_Countries_Generalized.shp" # world map
+    WORLD_MAP = "assets/shapefiles/World_Countries_(Generalized)/World_Countries_Generalized.shp" # world map
     DEFAULT_TEMPORAL_COLUMNS = ["orgc", "tceq", "clay"]
+
 
     if not os.path.exists(WORLD_MAP):
         st.error("World map not found. Please download the world map from https://www.naturalearthdata.com/downloads/10m-cultural-vectors/10m-admin-0-countries/")
