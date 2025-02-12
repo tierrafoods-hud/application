@@ -43,12 +43,12 @@ def replace_invalid_dates(date_str, default_start_date=pd.Timestamp('1900-01-01'
     # Convert to datetime
     return pd.to_datetime(valid_date_str, errors='coerce')
 
-def plot_distribution_charts(numeric_columns, dataset, title=""):
+def plot_distribution_charts(numeric_columns, dataset, country_name=""):
     """
     Plot distribution charts for numeric columns in a dataset.
     @param numeric_columns - List of numeric columns to plot distribution charts for.
     @param dataset - The dataset containing the numeric columns.
-    @param title - Title for the distribution charts (default is an empty string).
+    @param country_name - Title for the distribution charts (default is an empty string).
     @return None
     """
     num_cols = len(numeric_columns)
@@ -62,7 +62,7 @@ def plot_distribution_charts(numeric_columns, dataset, title=""):
 
     for i, col in enumerate(numeric_columns):
         sns.histplot(dataset[col], kde=True, ax=axes[i])
-        axes[i].set_title(f'Distribution of {col}')
+        axes[i].set_title(f'Distribution of {col} for `{country_name}`')
 
     # Hide unused subplots
     for j in range(i + 1, len(axes)):

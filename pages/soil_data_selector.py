@@ -297,16 +297,13 @@ if __name__ == "__main__":
 
     with st.expander("About"):
 
-        st.markdown("""
-                    This is a tool to help you select and porcess the required soil data for a specific location and time period.
-                    You can select the country, the bounding box, the date range, and the depth filters to get the required data.
-                    You can then use this data to train a machine learning model based on the data.
+        st.write("This is a tool to help you select and process the required soil data for a specific location and time period.")
+        st.write("You can select the country, the bounding box, the date range, and the depth filters to get the required data.")
+        st.write("You can then use this data to train a machine learning model based on the data.")
 
-                    __Note:__
-                    - The data is stored in a csv file.
-                    - The data is stored in the outputs folder.
-                    - In case of invalid dates, it is replaced with a random valid date within the date range.
-
-                    """)
+        st.subheader("Note:")
+        st.write("- The data is stored in a csv file.")
+        st.write("- The data is stored in the outputs folder.") 
+        st.write("- In case of invalid dates, it is replaced with a random valid date within the date range.")
     
     show()

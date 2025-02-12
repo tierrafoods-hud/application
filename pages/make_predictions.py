@@ -136,7 +136,7 @@ def show():
                 """)
 
     model, selected_model = select_model()
-
+    
     with st.spinner("Loading model..."):
         if model:
             scaler = load_scaler(selected_model['scaler'])

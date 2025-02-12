@@ -28,7 +28,7 @@ def load_dataset(data):
             return pd.read_csv(data)
 
 @st.cache_data
-def vis_missing_data(data):
+def vis_missing_data(data, country_name):
     """
     Visualize missing data in a dataset using a heatmap.
     @param data - The dataset containing missing values
@@ -36,7 +36,7 @@ def vis_missing_data(data):
     """
     plt.figure(figsize=(10, 6))
     sns.heatmap(data.isnull(), cbar=False, cmap='viridis')
-    plt.title(f'Missing values in the dataset')
+    plt.title(f'Missing values in the dataset for `{country_name}`')
     st.pyplot(plt)
 
 @st.cache_data
@@ -205,7 +205,7 @@ def show():
         with tab1:
             st.subheader("Missing data")
             with st.spinner("Visualising missing data..."):
-                vis_missing_data(DATASET)
+                vis_missing_data(DATASET, country_name)
         
         with tab2:
             # plot the distribution charts
@@ -213,7 +213,7 @@ def show():
             st.write(f"The distribution charts are plotted based on the filtered dataset dates between `{start_date}` and `{end_date}`")
             with st.spinner("Plotting distribution charts..."):
                 numeric_columns = DATASET.select_dtypes(include=['number']).columns.tolist()
-                fig = plot_distribution_charts(numeric_columns, DATASET)
+                fig = plot_distribution_charts(numeric_columns, DATASET, country_name)
                 st.pyplot(fig)
 
         with tab3:

@@ -3,23 +3,35 @@ import datetime
 
 version = "1.0.0"
 tierra_logo = "assets/images/tierra-sphere-logo.png"
-uoh_logo = "assets/images/uoh-logo.svg"
+uoh_logo = "assets/images/uoh-logo.png"
+fav_icon = "favicon.ico"
 
-def sidebar(title="Tierra Sphere Carbon Capture Prediction Application", layout_style="centered"):
+def sidebar(title="Tierrasphere Carbon Capture Prediction Application", about="", layout_style="centered"):
     st.set_page_config(
-        page_title=title,
-        page_icon=tierra_logo,
-        layout=layout_style
+        page_title=title + " | Tierrasphere",
+        page_icon=fav_icon,
+        layout=layout_style,
+        menu_items={
+            'Get Help': 'https://www.tierrasphere.com/#contact',
+            'Report a bug': "https://www.tierrasphere.com/#contact",
+            'About': about if about else title
+        }
     )
 
     with st.sidebar:
 
         st.logo(tierra_logo, size="large")
+        st.header("Menu")
+        st.page_link("app.py", label="Home", icon="🏠")
+        st.page_link("pages/soil_data_selector.py", label="Soil Data Selector", icon="📁")
+        st.page_link("pages/visualise_soil_data.py", label="Visualise Soil Data", icon="📊")
+        st.page_link("pages/make_predictions.py", label="Make Predictions", icon="📈")
 
-        # st.page_link("app.py", label="Home")
-        # st.page_link("pages/soil_data_selector.py", label="Soil Data Selector")
-        # st.page_link("pages/visualise_soil_data.py", label="Visualise Soil Data")
+        st.subheader("For developer use only")
+        st.page_link("pages/build_regression_model.py", label="Train Regression Model", icon="🔍")
 
+        st.divider()
+        
         col1, col2 = st.columns(2, vertical_alignment="center", gap="small")
         with col1:
             st.image(tierra_logo, use_container_width=True)
