@@ -4,7 +4,6 @@ import pandas as pd
 import geopandas as gpd
 from typing import Optional, List, Tuple, Dict
 import logging
-import random
 from utils.sidebar_menu import sidebar
 from utils.helper import filter_by_country, replace_invalid_dates
 

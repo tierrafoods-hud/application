@@ -284,27 +284,27 @@ def show():
                             """)
                 st.components.v1.html(map._repr_html_(), height=450)
 
-            st.subheader("Hotspot and Coldspot Analysis")
-            with st.spinner("Conducting hotspot and coldspot analysis..."):
-                country_map = None
-                map_file_path = f"assets/maps/{country_name.lower()}/{country_name.lower()}.geojson"
-                if os.path.exists(map_file_path):
-                    country_map = gpd.read_file(map_file_path)
-                else:
-                    st.error(f"Country map for `{country_name}` not found. Please download the country map from https://www.naturalearthdata.com/downloads/10m-cultural-vectors/10m-admin-0-countries/")
-                    st.stop()
-                # Assign points to grids
-                # dataset = create_grids(DATASET, cell_size=500)
-                # spatial join country map and gdf
-                gdf = gpd.GeoDataFrame(DATASET, geometry=gpd.points_from_xy(DATASET.longitude, DATASET.latitude))
-                gdf = gpd.sjoin(gdf, country_map, how='inner', predicate='intersects', lsuffix='left', rsuffix='right')
-                gdf[f'mean_{spatial_target_column}'] = gdf.groupby('name')[spatial_target_column].transform('mean')
-                st.write(gdf)
+            # st.subheader("Hotspot and Coldspot Analysis")
+            # with st.spinner("Conducting hotspot and coldspot analysis..."):
+            #     country_map = None
+            #     map_file_path = f"assets/maps/{country_name.lower()}/{country_name.lower()}.geojson"
+            #     if os.path.exists(map_file_path):
+            #         country_map = gpd.read_file(map_file_path)
+            #     else:
+            #         st.error(f"Country map for `{country_name}` not found. Please download the country map from https://www.naturalearthdata.com/downloads/10m-cultural-vectors/10m-admin-0-countries/")
+            #         st.stop()
+            #     # Assign points to grids
+            #     # dataset = create_grids(DATASET, cell_size=500)
+            #     # spatial join country map and gdf
+            #     gdf = gpd.GeoDataFrame(DATASET, geometry=gpd.points_from_xy(DATASET.longitude, DATASET.latitude))
+            #     gdf = gpd.sjoin(gdf, country_map, how='inner', predicate='intersects', lsuffix='left', rsuffix='right')
+            #     gdf[f'mean_{spatial_target_column}'] = gdf.groupby('name')[spatial_target_column].transform('mean')
+            #     st.write(gdf)
 
-                fig, ax = plt.subplots(figsize=(10, 6))
-                gdf.plot(column=f'mean_{spatial_target_column}', cmap='viridis', legend=True, ax=ax)
-                ax.axis('off')
-                st.pyplot(fig)
+            #     fig, ax = plt.subplots(figsize=(10, 6))
+            #     gdf.plot(column=f'mean_{spatial_target_column}', cmap='viridis', legend=True, ax=ax)
+            #     ax.axis('off')
+            #     st.pyplot(fig)
 
                 # # Group points by row_id and col_id, calculate mean of target column
                 # grouped = dataset.groupby(['row_id', 'col_id']).agg({
