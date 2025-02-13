@@ -8,7 +8,7 @@ import pandas as pd
 load_dotenv()
 
 def get_models():
-    query = "SELECT * FROM models order by `title`"
+    query = "SELECT * FROM models order by title"
     models = DB.fetchAllAsDict(query)
     return models
 

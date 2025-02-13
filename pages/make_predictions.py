@@ -14,7 +14,7 @@ load_dotenv()
 
 @st.cache_data
 def load_models():
-    query = "SELECT * FROM models order by `title`"
+    query = "SELECT * FROM models order by title"
     models = DB.fetchAllAsDict(query)
     return models
 
