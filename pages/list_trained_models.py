@@ -16,6 +16,11 @@ def show():
     # get all models from the database
     with st.spinner("Loading models..."):
         models = get_models()
+
+        if len(models) == 0:
+            st.error("No models found")
+            st.stop()
+
         # create a table with specific columns
         for model in models:
             with st.spinner(f"Loading model {model['title']}..."):

@@ -21,7 +21,7 @@ class DB:
         self.cursor = self.get_cursor()
 
     def get_connection(self):
-        return psycopg2.connect(host=DB_HOST, port=DB_PORT, user=DB_USER, password=DB_PASSWORD, dbname=DB_NAME)
+        return psycopg2.connect(host=DB_HOST, port=DB_PORT, user=DB_USER, password=DB_PASSWORD, dbname=DB_NAME, sslmode='require')
 
     def get_cursor(self):
         return self.connection.cursor()
@@ -35,6 +35,12 @@ class DB:
         self.cursor.execute(query, params)
         return self.cursor.fetchall()
     
+    def fetchAllAsDict(self, query, params=()):
+        self.cursor.execute(query, params)
+        columns = [desc[0] for desc in self.cursor.description]
+        rows = self.cursor.fetchall()
+        return [dict(zip(columns, row)) for row in rows]
+    
     def fetchOne(self, query, params=()):
         self.cursor.execute(query, params)
         return self.cursor.fetchone()
@@ -42,18 +48,19 @@ class DB:
     def fetchMany(self, query, params=(), size=1):
         self.cursor.execute(query, params)
         return self.cursor.fetchmany(size)
-
+    
     def update(self, query, params=()):
         self.cursor.execute(query, params)
-
         self.connection.commit()
         return self.cursor.rowcount
-
+    
     def delete(self, query, params=()):
         self.cursor.execute(query, params)
         self.connection.commit()
         return self.cursor.rowcount
-
+    
     def close(self):
-        self.connection.close()
-        self.cursor.close()
+        if self.cursor:
+            self.cursor.close()
+        if self.connection:
+            self.connection.close()
