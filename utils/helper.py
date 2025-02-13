@@ -92,7 +92,6 @@ def remove_outliers(df):
     
     return df
 
-@st.cache_data(ttl=600)
 def preprocess_data(df):
     """
     Preprocess the input DataFrame by performing the following steps:
@@ -103,43 +102,43 @@ def preprocess_data(df):
     @param df - The input DataFrame to be preprocessed.
     @return The preprocessed DataFrame.
     """
-    with st.spinner('Preprocessing data...'):
-        # Step 1: Remove columns with too many missing values
-        df = df.dropna(thresh=0.3 * len(df), axis=1)
-        
-        # Step 2: Remove negative values
-        # df = df[df.select_dtypes(include=['number']).ge(0).all(axis=1)] # removed all the
-        
-        # Step 3: Remove outliers
-        df = remove_outliers(df)
-        
-        # Step 4: Handle remaining missing values
-        # Get numeric columns excluding lat/lon
-        numeric_cols = df.select_dtypes(include=['int64', 'float64']).columns
-        numeric_cols = numeric_cols.drop(['latitude', 'longitude'], errors='ignore')
-        
-        # Calculate means once for all numeric columns
-        col_means = df[numeric_cols].mean()
-        
-        # Fill missing values in numeric columns efficiently
-        df[numeric_cols] = df[numeric_cols].fillna(col_means)
+    # Step 1: Remove columns with too many missing values
+    # Drop columns where more than 70% of values are missing (keep columns with at least 30% data)
+    df = df.dropna(thresh=0.3 * len(df), axis=1)
+    
+    # Step 2: Remove negative values
+    # df = df[df.select_dtypes(include=['number']).ge(0).all(axis=1)] # removed all the
+    
+    # Step 3: Remove outliers
+    df = remove_outliers(df)
+    
+    # Step 4: Handle remaining missing values
+    # Get numeric columns excluding lat/lon
+    numeric_cols = df.select_dtypes(include=['int64', 'float64']).columns
+    numeric_cols = numeric_cols.drop(['latitude', 'longitude'], errors='ignore')
+    
+    # Calculate means once for all numeric columns
+    col_means = df[numeric_cols].mean()
+    
+    # Fill missing values in numeric columns efficiently
+    df[numeric_cols] = df[numeric_cols].fillna(col_means)
 
-        # Handle silt and clay columns if present
-        if {'silt', 'clay'}.issubset(df.columns):
-            df['silt_plus_clay'] = df[['silt', 'clay']].sum(axis=1, skipna=True)
-            df.drop(columns=['silt', 'clay'], inplace=True)
+    # Handle silt and clay columns if present
+    if {'silt', 'clay'}.issubset(df.columns):
+        df['silt_plus_clay'] = df[['silt', 'clay']].sum(axis=1, skipna=True)
+        df.drop(columns=['silt', 'clay'], inplace=True)
 
-        # Calculate organic matter metrics if orgc present
-        if 'orgc' in df.columns:
-            # Use vectorized operations for better performance
-            organic_matter = 1.724 * df['orgc']
-            df = df.assign(
-                organic_matter=organic_matter,
-                bulk_density=1.62 - 0.06 * organic_matter
-            )
+    # Calculate organic matter metrics if orgc present
+    if 'orgc' in df.columns:
+        # Use vectorized operations for better performance
+        organic_matter = 1.724 * df['orgc']
+        df = df.assign(
+            organic_matter=organic_matter,
+            bulk_density=1.62 - 0.06 * organic_matter
+        )
 
-        # Get final missing value count
-        missing_count = df.isnull().sum().sum()
+    # Get final missing value count
+    # missing_count = df.isnull().sum().sum()
 
     return df
 
