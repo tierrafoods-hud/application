@@ -140,7 +140,10 @@ def show():
     with st.spinner("Loading model..."):
         if model:
             scaler = load_scaler(selected_model['scaler'])
-            model_features = json.loads(selected_model['features'])
+            if isinstance(selected_model['features'], str):
+                model_features = json.loads(selected_model['features'])
+            else:
+                model_features = selected_model['features']
             model_target = selected_model['target']
             predicted_column = f'{model_target}_predicted'
 

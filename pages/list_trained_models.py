@@ -25,7 +25,10 @@ def show():
         for model in models:
             with st.spinner(f"Loading model {model['title']}..."):
                 with st.expander(f"{model['title']}", expanded=True):
-                    features = json.loads(model['features'])
+                    if isinstance(model['features'], str):
+                        features = json.loads(model['features'])  # Only parse if it's a string
+                    else:
+                        features = model['features']  # Use it directly if it's already a list
                     st.markdown(f"### {model['title']}")
                     st.markdown(f"**Model Type:** {model['model_type']}")
                     st.markdown(f"**Features:** {', '.join(features)}")
@@ -39,7 +42,10 @@ def show():
                     
                     st.markdown("#### Performance Metrics")
                     
-                    metrics = json.loads(model['metrics'])
+                    if isinstance(model['metrics'], str):
+                        metrics = json.loads(model['metrics'])
+                    else:
+                        metrics = model['metrics']
                     
                     # Create a DataFrame for the metrics table
                     col1, col2, col3 = st.columns(3)
