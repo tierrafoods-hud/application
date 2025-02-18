@@ -7,6 +7,7 @@ import math
 import streamlit as st # type: ignore
 import folium
 from folium.plugins import HeatMap
+import numpy as np
 
 def filter_by_country(df: pd.DataFrame, country_name: str) -> Optional[pd.DataFrame]:
     """
@@ -177,3 +178,46 @@ def folium_map(data, target_column, zoom_start=4):
 
 
     return map
+
+def calculate_SOC_stocks(p, BD, SOC, rf):
+    """
+    Calculate the Soil Organic Carbon (SOC) stocks based on the provided parameters.
+    @param p - The fraction of horizon contributing to 30 cm depth
+    @param BD - The bulk density in g/cm³
+    @param SOC - The soil organic carbon concentration in g/kg
+    @param rf - The rock fragment volume fraction (0-1)
+    @return The SOC stock in t/ha
+    """
+    # Convert inputs to NumPy arrays for vectorized operations
+    p = np.array(p)       # Fraction of each horizon contributing to 30 cm
+    BD = float(BD)     # Bulk density (g/cm³)
+    SOC = float(SOC)   # SOC concentration (g/kg)
+    rf = float(rf)     # Rock fragment fraction (as decimal)
+
+    # Compute SOC stocks using the given formula
+    # Multiply by 1 to directly get t/ha (tons per hectare)
+    SOC_stock = np.sum(p * BD * SOC * (1 - rf))
+    # print the calculation for manual verification
+    print(f"{p} * {BD} * {SOC} * (1 - {rf}) = {SOC_stock}")
+
+    return SOC_stock
+
+def calculate_horizon_fractions(upper_depth, lower_depth, total_depth=30):
+    """
+    Calculate the fractions of the horizon depths relative to the total depth.
+    @param upper_depth - The upper depth values.
+    @param lower_depth - The lower depth values.
+    @param total_depth - The total depth value (default is 30).
+    @return The fractions of the horizon depths.
+    """
+    # Ensure the input arrays are numpy arrays for element-wise operations
+    # upper_depth = np.array(upper_depth)
+    # lower_depth = np.array(lower_depth)
+    
+    # Calculate the depth of each horizon
+    horizon_depths = lower_depth - upper_depth
+    
+    # Calculate the fraction of each horizon in relation to the total depth
+    fractions = horizon_depths / total_depth
+    
+    return fractions

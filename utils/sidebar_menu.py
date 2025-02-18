@@ -37,6 +37,7 @@ def sidebar(title="Tierrasphere Carbon Capture Prediction Application", about=""
                 """, unsafe_allow_html=True)
         st.page_link("pages/build_regression_model.py", label="Train Regression Model", icon="🔍")
         st.page_link("pages/list_trained_models.py", label="List Trained Models", icon="📋")
+        # st.page_link("pages/soil_data_cleanup.py", label="Clean Soil Data", icon="🧼")
         
         st.divider()
         

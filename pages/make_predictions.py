@@ -4,12 +4,12 @@ from config.database import get_db
 from dotenv import load_dotenv
 import os, json, joblib
 import pandas as pd
-from utils.helper import replace_invalid_dates, folium_map
+from utils.helper import replace_invalid_dates, folium_map, calculate_horizon_fractions, calculate_SOC_stocks
 import matplotlib.pyplot as plt
 import geopandas as gpd
 import utils.grids as grids
 import folium
-
+import numpy as np
 load_dotenv()
 
 @st.cache_data
@@ -170,8 +170,6 @@ def show():
 
             uploaded_file = st.file_uploader("Upload a test dataset", type=["csv", "xlsx"])
             if uploaded_file:
-
-
                 st.write(f"Uploaded file: {uploaded_file.name}")
                 try:
                     if uploaded_file.type == "text/csv":
@@ -182,32 +180,49 @@ def show():
                         st.error("Invalid file type. Please upload a CSV or Excel file.")
                         return
                     
-                    dataset = preprocess_data(dataset, model_features)
+                    with st.spinner("Pre-processing data..."):
+                        dataset = preprocess_data(dataset, model_features)
 
-                    st.subheader("Dataset:")
-                    st.write("The pre-processsed dataset as uploaded by you is shown below")
-                    st.dataframe(dataset)
+                        st.subheader("Dataset:")
+                        st.write("The pre-processsed dataset as uploaded by you is shown below")
+                        st.dataframe(dataset)
 
-                    # make predictions
-                    X = dataset[model_features] #  use prediction features
+                    with st.spinner("Predicting values..."):
+                        # make predictions
+                        X = dataset[model_features] #  use prediction features
 
-                    # check if dataset has missing values
-                    if X.isnull().any().any():
-                        # Get columns with missing values
-                        missing_cols = X.columns[X.isnull().any()].tolist()
-                        st.error(f"The dataset has missing values in the following columns: {', '.join(missing_cols)}. Please check the dataset and try again.")
-                        return
+                        # check if dataset has missing values
+                        if X.isnull().any().any():
+                            # Get columns with missing values
+                            missing_cols = X.columns[X.isnull().any()].tolist()
+                            st.error(f"The dataset has missing values in the following columns: {', '.join(missing_cols)}. Please check the dataset and try again.")
+                            return
 
-                    X_scaled = scaler.transform(X)
-                    predictions = model.predict(X_scaled)
+                        X_scaled = scaler.transform(X)
+                        predictions = model.predict(X_scaled)
 
+                        # add predictions to the dataset
+                        dataset[predicted_column] = predictions
+                        
+                        # calculate the fractions of the upper and lower depths
+                        dataset['depths_fractions'] = calculate_horizon_fractions(dataset['upper_depth'], dataset['lower_depth'])
+                        # rock fragment volume
+                        dataset['rock_fragment_volume'] = np.random.uniform(1, 2, size=len(dataset)) # need to get this from the dataset
 
-                    # add predictions to the dataset
-                    dataset[predicted_column] = predictions
+                        # calculate the SOC stocks for each row
+                        dataset['SOC_stocks_t/ha'] = dataset.apply(lambda row: calculate_SOC_stocks(
+                            row['depths_fractions'],
+                            row['bulk_density'],
+                            row[predicted_column],
+                            row['rock_fragment_volume']
+                        ), axis=1)
 
-                    st.subheader("Predictions:")
-                    st.write(f"The predictions for {model_target} are shown below")
-                    st.dataframe(dataset)
+                        # convert the units and store in a new column
+                        # dataset[f'{model_target}_t/ha'] = dataset[predicted_column] * 100
+
+                        st.subheader("Predictions:")
+                        st.write(f"The predictions for {model_target} are shown below")
+                        st.dataframe(dataset)
 
                     # if the dataset has the target column plot the predictions vs the target
                     # if model_target in dataset.columns:
@@ -228,42 +243,42 @@ def show():
 
                     # get unique upper_depth
 
-                    
-                    st.subheader("Depth Profile and Visualization")
-                    soil_ranges = [
-                        "0-5cm",
-                        "5-15cm",
-                        "15-30cm"
-                    ]
+                    with st.spinner("Generating depth profile and visualization..."):
+                        st.subheader("Depth Profile and Visualization")
+                        soil_ranges = [
+                            "0-5cm",
+                            "5-15cm",
+                            "15-30cm"
+                        ]
 
-                    col1, col2 = st.columns(2, gap="small", vertical_alignment="bottom")
-                    with col1:
-                        aggregate = st.checkbox("Aggregate", help="Aggregate the predictions by latitude and longitude ignoring the upper and lower depths", value=True)
-                    with col2:
-                        if not aggregate:
-                            col1, col2 = st.columns(2, gap="small", vertical_alignment="bottom")
-                            with col1:
-                                upper_depth = st.number_input("Upper depth (in cm)", min_value=0, max_value=100, value=5)
-                            with col2:
-                                lower_depth = st.number_input("Lower depth (in cm)", min_value=0, max_value=100, value=15)
+                        col1, col2 = st.columns(2, gap="small", vertical_alignment="bottom")
+                        with col1:
+                            aggregate = st.checkbox("Aggregate", help="Aggregate the predictions by latitude and longitude ignoring the upper and lower depths", value=True)
+                        with col2:
+                            if not aggregate:
+                                col1, col2 = st.columns(2, gap="small", vertical_alignment="bottom")
+                                with col1:
+                                    upper_depth = st.number_input("Upper depth (in cm)", min_value=0, max_value=100, value=5)
+                                with col2:
+                                    lower_depth = st.number_input("Lower depth (in cm)", min_value=0, max_value=100, value=15)
 
-                    spatial_dataset = dataset.copy()
+                        spatial_dataset = dataset.copy()
 
-                    if aggregate:
-                        # aggregate the predictions by latitude and longitude
-                        predicted_mean = predicted_column + '_mean'
-                        grouped = spatial_dataset.groupby(['latitude', 'longitude'])[predicted_column].mean().reset_index()
-                        spatial_dataset = spatial_dataset.merge(grouped, on=['latitude', 'longitude'], how='left', suffixes=('', '_mean'))
-                        spatial_dataset[predicted_column] = spatial_dataset[predicted_mean]
-                        spatial_dataset.drop(columns=[predicted_mean], inplace=True)
+                        if aggregate:
+                            # aggregate the predictions by latitude and longitude
+                            predicted_mean = predicted_column + '_mean'
+                            grouped = spatial_dataset.groupby(['latitude', 'longitude'])[predicted_column].mean().reset_index()
+                            spatial_dataset = spatial_dataset.merge(grouped, on=['latitude', 'longitude'], how='left', suffixes=('', '_mean'))
+                            spatial_dataset[predicted_column] = spatial_dataset[predicted_mean]
+                            spatial_dataset.drop(columns=[predicted_mean], inplace=True)
 
-                    else:
-                        # filter the dataset by the selected upper and lower depths
-                        # upper_depth = int(soil_depth.split('-')[0])
-                        # lower_depth = int(soil_depth.split('-')[1][:-2])  # Remove 'cm' suffix
+                        else:
+                            # filter the dataset by the selected upper and lower depths
+                            # upper_depth = int(soil_depth.split('-')[0])
+                            # lower_depth = int(soil_depth.split('-')[1][:-2])  # Remove 'cm' suffix
 
-                        spatial_dataset = spatial_dataset[spatial_dataset['upper_depth'] == upper_depth]
-                        spatial_dataset = spatial_dataset[spatial_dataset['lower_depth'] == lower_depth]
+                            spatial_dataset = spatial_dataset[spatial_dataset['upper_depth'] == upper_depth]
+                            spatial_dataset = spatial_dataset[spatial_dataset['lower_depth'] == lower_depth]
 
 
                     with st.spinner("Generating map..."):
