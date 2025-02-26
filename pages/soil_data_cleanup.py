@@ -100,6 +100,6 @@ if __name__ == "__main__":
     st.write("This page is under construction. Please check back later.")
 
     DEFAULT_COUNTRY_NAME = "Mexico"
-    DEFAULT_DATA_PATH = "outputs/processed_data_Mexico_SOC.csv"
+    DEFAULT_DATA_PATH = "outputs/clean_dataset_mexico.csv"
 
     show()
