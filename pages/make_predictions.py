@@ -277,8 +277,7 @@ def show():
                             # upper_depth = int(soil_depth.split('-')[0])
                             # lower_depth = int(soil_depth.split('-')[1][:-2])  # Remove 'cm' suffix
 
-                            spatial_dataset = spatial_dataset[spatial_dataset['upper_depth'] == upper_depth]
-                            spatial_dataset = spatial_dataset[spatial_dataset['lower_depth'] == lower_depth]
+                            spatial_dataset = spatial_dataset[(spatial_dataset['lower_depth'] >= lower_depth) & (spatial_dataset['upper_depth'] <= upper_depth)]
 
 
                     with st.spinner("Generating map..."):
