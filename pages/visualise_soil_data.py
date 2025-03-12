@@ -9,31 +9,27 @@ import os
 from datetime import datetime
 from utils.grids import get_grid_cell
 
-global DATASET
+DEFAULT_COUNTRY_COLUMN = "country_name"
+DEFAULT_COUNTRY_NAME = "Mexico"
+DEFAULT_BOUNDING_BOX = [-117.12776, 14.5388286402, -86.811982388, 32.72083]
+WORLD_MAP = "assets/shapefiles/World_Countries_(Generalized)/World_Countries_Generalized.shp" # world map
+DEFAULT_TEMPORAL_COLUMNS = ["orgc", "tceq", "clay"]
+
+DATASET = None  # Initialize DATASET as a global variable
 
 @st.cache_data
 def load_dataset(data):
-    """
-    Load a dataset from a file based on its extension. If the file has a '.gpkg' extension, load it using geopandas. Otherwise, load it using pandas.
-    First checks if data exists in session state, otherwise loads from file.
-    @param data - the file to load
-    @return the loaded dataset
-    """
-    if 'processed_files' in st.session_state:
-        return pd.read_csv(st.session_state['processed_files']['csv'])
+    global DATASET  # Declare DATASET as global
+   
+    if data.name.endswith('.gpkg'):
+        DATASET = gpd.read_file(data)
     else:
-        if data.name.endswith('.gpkg'):
-            return gpd.read_file(data)
-        else:
-            return pd.read_csv(data)
+        DATASET = pd.read_csv(data)
+
+    return DATASET
 
 @st.cache_data
 def vis_missing_data(data, country_name):
-    """
-    Visualize missing data in a dataset using a heatmap.
-    @param data - The dataset containing missing values
-    @return A heatmap showing the locations of missing values in the dataset.
-    """
     plt.figure(figsize=(10, 6))
     sns.heatmap(data.isnull(), cbar=False, cmap='viridis')
     plt.title(f'Missing values in the dataset for `{country_name}`')
@@ -41,12 +37,6 @@ def vis_missing_data(data, country_name):
 
 @st.cache_data
 def apply_filters(data, filters):
-    """
-    Apply filters to a dataset based on specified criteria.
-    @param data - the dataset to filter
-    @param filters - a dictionary containing filter criteria
-    @return The filtered dataset based on the applied filters.
-    """
     dataset = data.copy()
 
     # country filter
@@ -109,7 +99,6 @@ def timeseries_analysis(data, filters):
 
     return dataset
 
-@st.cache_data
 def create_grids(data, cell_size=1000):
     row_ids = []
     col_ids = []
@@ -123,7 +112,7 @@ def create_grids(data, cell_size=1000):
     return data
 
 def show():
-    global DATASET
+    global DATASET  # Declare DATASET as global
     with st.expander("Configure your dataset", expanded=True if 'filters' not in st.session_state else False):
         st.header("Visualise your dataset")
 
@@ -137,16 +126,16 @@ def show():
             DATASET = load_dataset(new_dataset)
         
         if DATASET is None:
-            st.error("No dataset found. Please upload a dataset or use the latest dataset.")
+            st.error("No dataset found. Please upload a dataset to visualise.")
             st.stop()
         
-        col1, col2 = st.columns(2)
+        country_column = DEFAULT_COUNTRY_COLUMN #st.text_input("Country column name", value=DEFAULT_COUNTRY_COLUMN, help="The name of the column that contains the country name in your dataset.")
+        col1, col2 = st.columns(2, vertical_alignment="bottom")
         with col1:
-            country_column = st.text_input("Country column name", value=DEFAULT_COUNTRY_COLUMN, help="The name of the column that contains the country name in your dataset.")
-        with col2:
             country_name = st.selectbox("Select a country", DATASET[country_column].unique(), help="Country is loaded from the dataset using the column name specified above.")
+        with col2:
+            use_bounding_box = st.checkbox("Use Bounding Box", help="Use bounding box to filter the data.")
         
-        use_bounding_box = st.checkbox("Use Bounding Box", help="Use bounding box to filter the data.")
         bounding_box = None
         if use_bounding_box:
             col1, col2 = st.columns(2)
@@ -160,19 +149,21 @@ def show():
         
         if 'date' in DATASET.columns:
             col1, col2 = st.columns(2)
-            date_col = pd.to_datetime(DATASET['date'], format='%Y-%m-%d', errors='coerce')
+            date_col = pd.to_datetime(DATASET['date'], errors='ignore')
+            # invalid_dates_count = date_col.isnull().sum()
+            # DATASET = DATASET[date_col.notnull()]
             
-            if date_col.isnull().all():
-                start_date = pd.to_datetime("1900-01-01")
-                end_date = pd.to_datetime(datetime.now().strftime('%Y-%m-%d'))
-            else:
-                start_date = date_col.min()
-                end_date = date_col.max()
+            # if invalid_dates_count > 0:
+                # st.warning(f"{invalid_dates_count} rows were dropped due to invalid dates.")
+
+            start_date = "1900-01-01"
+            end_date = "today"
 
             with col1:
                 start_date = st.date_input("Start Date", 
                                         key='start_date',
-                                        value=start_date, 
+                                        value=start_date,
+                                        max_value=datetime.today(),
                                         help="The start date of the data to be visualised.")
             with col2:
                 end_date = st.date_input("End Date", 
@@ -331,24 +322,10 @@ if __name__ ==  "__main__":
     with st.expander("About"):
         st.write("This tool allows you to visualise the soil data and its properties for a given dataset.")
 
-    
-    DEFAULT_COUNTRY_COLUMN = "country_name"
-    DEFAULT_COUNTRY_NAME = "Mexico"
-    DEFAULT_BOUNDING_BOX = [-117.12776, 14.5388286402, -86.811982388, 32.72083]
-    WORLD_MAP = "assets/shapefiles/World_Countries_(Generalized)/World_Countries_Generalized.shp" # world map
-    DEFAULT_TEMPORAL_COLUMNS = ["orgc", "tceq", "clay"]
-
-
     if not os.path.exists(WORLD_MAP):
         st.error("World map not found. Please download the world map from https://www.naturalearthdata.com/downloads/10m-cultural-vectors/10m-admin-0-countries/")
         st.stop()
     
     MAP_FILE = gpd.read_file(WORLD_MAP)
-
-    DATASET = None
-    if 'processed_files' in st.session_state:
-        DATASET = st.session_state['processed_files']['csv']
-        DATASET = load_dataset(DATASET)
-        st.write(f"Using the latest dataset for `{st.session_state['processed_files']['country_name']}` or upload your own dataset below.")
     
     show()

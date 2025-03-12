@@ -11,6 +11,7 @@ import os
 
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from sklearn.linear_model import LinearRegression
+from sklearn.neural_network import MLPRegressor
 from sklearn.svm import SVR
 from sklearn.neighbors import KNeighborsRegressor
 from sklearn.preprocessing import StandardScaler
@@ -20,60 +21,152 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from config.database import get_db
 from dotenv import load_dotenv
 import json
+from sklearn.preprocessing import OneHotEncoder
+import time
 
 load_dotenv()
 
-@st.cache_data(ttl=600)
+MODELS_LIST = {
+    'Random Forest Regressor': RandomForestRegressor(),
+    'Gradient Boosting Regressor': GradientBoostingRegressor(),
+    'Linear Regression': LinearRegression(),
+    'Support Vector Regressor': SVR(),
+    'K-Nearest Neighbors Regressor': KNeighborsRegressor(),
+    'MLP Regressor (neural network)': MLPRegressor()
+}
+
+DEFAULT_DATA_PATH = "" #"data/mexico_combined_data.csv"
+DEFAULT_COUNTRY_NAME = "Mexico"
+DEFAULT_TARGET_VARIABLES = ["orgc"]
+TEST_SIZE = 0.3
+RANDOM_STATE = 42
+
+# Define numeric and categorical feature columns
+# NUMERIC_FEATURES = None #['upper_depth','lower_depth','silt','clay','elcosp','phaq','sand','temperature','precipitation']
+CATEGORICAL_FEATURES = ['landcover', 'zone_number']
+TARGET_COLUMN = None
+DROP_COLUMNS = ['country_name', 'region', 'continent', 'ecoregion_type', 'zone_name']
+
+# create required folders
+os.makedirs("outputs", exist_ok=True)
+os.makedirs("models", exist_ok=True)
+
+# database
+db_type = os.getenv('DB_TYPE')
+DB = get_db(db_type)
+
+def preprocessing_analysis(df, target_variable, drop_columns=[]):
+    def drop_highly_correlated(df, target_variable):
+        if target_variable == 'orgc':
+            return df.drop(columns=['tceq'], errors="ignore")
+        elif target_variable == 'tceq':
+            return df.drop(columns=['orgc'], errors="ignore")
+        return df
+    
+    dataset = df.copy()
+    initial_rows = len(dataset)
+    st.write(f"Before dropping rows: {dataset.shape}")
+
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+
+    dataset = drop_highly_correlated(dataset, target_variable)
+
+    # Drop columns with more than 70% missing values
+    status_text.text("Dropping columns with more than 70% missing values...")
+    threshold = 0.7 * len(dataset)
+    cols_to_drop = [col for col in dataset.columns if dataset[col].isna().sum() > threshold and col != target_variable]
+    dataset.drop(columns=cols_to_drop + drop_columns, errors='ignore', inplace=True)
+    progress_bar.progress(0.2)
+
+    # Check if target variable is in the dataset
+    status_text.text("Checking if target variable is in the dataset...")
+    if target_variable not in dataset.columns:
+        st.error(f"The target variable {target_variable} is not in the dataset")
+        progress_bar.empty()
+        status_text.empty()
+        st.stop()
+
+    # Drop rows with missing target variable
+    status_text.text("Dropping rows with missing target variable...")
+    dataset.dropna(subset=[target_variable], inplace=True)
+    st.warning(f"Removed {initial_rows - len(dataset)} rows due to missing values in target column. New shape: {dataset.shape}")
+    initial_rows = len(dataset)
+    progress_bar.progress(0.4)
+
+    # Drop duplicate rows
+    status_text.text("Dropping duplicate rows...")
+    dataset.drop_duplicates(inplace=True)
+    st.warning(f"Removed {initial_rows - len(dataset)} rows as duplicates. New shape: {dataset.shape}")
+    initial_rows = len(dataset)
+    progress_bar.progress(0.5)
+
+    # Remove rows with missing values
+    status_text.text("Dropping rows with missing values...")
+    dataset.dropna(inplace=True)
+    st.warning(f"Removed {initial_rows - len(dataset)} rows with missing values. New shape: {dataset.shape}")
+    progress_bar.progress(0.6)
+
+    # Convert categorical columns to string
+    dataset[CATEGORICAL_FEATURES] = dataset[CATEGORICAL_FEATURES].astype(str)
+    progress_bar.progress(0.8)
+
+    # Replace invalid zone_number values if roman numerals with integers
+    if 'zone_number' in dataset.columns:
+        status_text.text("Replacing invalid zone_number values...")
+        dataset = dataset[~dataset['zone_number'].isin(['VII', 'VI'])]
+    progress_bar.progress(1.0)
+
+    st.write(f"Final dataset shape: {dataset.shape[0]} rows × {dataset.shape[1]} columns")
+    status_text.success("Preprocessing complete!")
+
+    # remove after 3 secs
+    time.sleep(2)
+    status_text.empty()
+    progress_bar.empty()
+
+    dataset.reset_index(drop=True, inplace=True)
+    
+    return dataset
+
 def split_and_scale_data(df, target_variable):
-    """
-    Split the data into features (X) and target variables (y), scale the features using StandardScaler, and return the scaled features and target variables.
-    @param df - The dataframe containing the data
-    @param target_variable - The target variable to predict
-    @return X_scaled - The scaled features
-    @return y - The target variables
-    """
-    # save the dataset to csv
+    def save_to_session(key, value):
+        st.session_state[key] = value
+
+    def preprocess_categorical(df, categorical_features):
+        # df[categorical_features] = df[categorical_features].astype(str)
+        encoder = OneHotEncoder(drop='first', sparse_output=False)
+        encoded_cols = encoder.fit_transform(df[categorical_features])
+        encoded_df = pd.DataFrame(encoded_cols, columns=encoder.get_feature_names_out(categorical_features))
+        df = df.drop(columns=categorical_features)
+        return pd.concat([df, encoded_df], axis=1), encoder
+
     df.to_csv(f"outputs/processed_data_{target_variable}.csv", index=False)
+    save_to_session(f'{target_variable}_dataset', df.copy())
 
-    # save in session state
-    st.session_state[f'{target_variable}_dataset'] = df.copy()
+    if set(CATEGORICAL_FEATURES).issubset(df.columns):
+        df, encoder = preprocess_categorical(df, CATEGORICAL_FEATURES)
+        save_to_session('_encoder', encoder)
 
-    # drop non-numeric columns
-    df = df.select_dtypes(include=['number']).copy()
+    NUMERIC_FEATURES = [col for col in df.select_dtypes(include=['number']).columns.tolist() if col != target_variable]
+    df = df[NUMERIC_FEATURES + [target_variable]]
 
-    # split data into features and target
-    drop_columns = [target_variable, 'latitude', 'longitude']
-
-    # Drop the complementary carbon variable to avoid data leakage
-    # This is required to train models without the other value since they are highly correlated
-    if target_variable == 'orgc':
-        drop_columns.append('tceq')
-    elif target_variable == 'tceq':
-        drop_columns.append('orgc')
-
-    # save the features and target variable
-    st.session_state['_features'] = df.drop(columns=drop_columns, errors='ignore')
-    st.session_state['_target'] = df[target_variable]
-
-    X = df.drop(columns=drop_columns, errors='ignore') # ignore error if target_variables is not in the dataset
+    X = df.drop(columns=[target_variable], errors='ignore')
     y = df[target_variable]
 
-    # scale data
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
-    # save the scalar
-    st.session_state['_scaler'] = scaler
+    save_to_session('_scaler', scaler)
 
-    # create scaled dataset
     scaled_dataset = pd.DataFrame(X_scaled, columns=X.columns)
     scaled_dataset[target_variable] = y.values
 
-    # save in session state
-    st.session_state[f'{target_variable}_scaled_dataset'] = scaled_dataset
+    save_to_session(f'{target_variable}_scaled_dataset', scaled_dataset)
+    save_to_session('_features', X)
+    save_to_session('_target', y)
 
     return scaled_dataset, X_scaled, y
 
-@st.cache_data
 def save_model_to_db(title, model_type, features, target, scaler, metrics, model_path):
     """
     Save model metadata to database
@@ -132,18 +225,18 @@ def validate_model(models, features, target, title, save_model=False):
     @param save_model - Whether to save the best performing model
     @return The best performing model based on MAE
     """
-    with st.spinner('Validating models...'):
-        # Create a progress bar
-        progress_bar = st.progress(0)
-        status_text = st.empty()
+    # Create a progress bar
+    progress_bar = st.progress(0)
+    status_text = st.empty()
 
-        best_model = None
-        best_model_type = None
-        best_score = float('inf')
+    best_model = None
+    best_model_type = None
+    best_score = float('inf')
 
-        # Create subplot grid
-        fig, axes = plt.subplots(1, len(models), figsize=(20, 5))
-        
+    # Create subplot grid
+    fig, axes = plt.subplots(1, len(models), figsize=(20, 5))
+    
+    try:
         # Train and evaluate each model
         for i, (name, model) in enumerate(models.items()):
             status_text.text(f'Training and evaluating {name}...')
@@ -156,25 +249,26 @@ def validate_model(models, features, target, title, save_model=False):
                 best_model_type = name
                 best_score = metrics['mae']
 
-            st.subheader(f"Model: {name}")
-            # plot metrics
-            col1, col2, col3 = st.columns(3, gap="small", vertical_alignment="center", border=True)
-            with col1:
-                st.markdown(f"<h3 style='text-align: center;'>MSE: {metrics['mse']:.2f}</h3>", unsafe_allow_html=True)
-            with col2:
-                st.markdown(f"<h3 style='text-align: center;'>MAE: {metrics['mae']:.2f}</h3>", unsafe_allow_html=True)
-            with col3:
-                st.markdown(f"<h3 style='text-align: center;'>R2: {metrics['r2']:.2f}</h3>", unsafe_allow_html=True)
+            with st.spinner(f"Plotting {name} model..."):
+                st.subheader(f"Model: {name}")
+                # plot metrics
+                col1, col2, col3 = st.columns(3, gap="small", vertical_alignment="center", border=True)
+                with col1:
+                    st.markdown(f"<h3 style='text-align: center;'>MSE: {metrics['mse']:.2f}</h3>", unsafe_allow_html=True)
+                with col2:
+                    st.markdown(f"<h3 style='text-align: center;'>MAE: {metrics['mae']:.2f}</h3>", unsafe_allow_html=True)
+                with col3:
+                    st.markdown(f"<h3 style='text-align: center;'>R2: {metrics['r2']:.2f}</h3>", unsafe_allow_html=True)
 
-            # plot individual model
-            plt.figure(figsize=(10, 6))
-            plt.scatter(y_test, y_pred, alpha=0.7, edgecolors='k')
-            plt.plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--')
-            plt.title(f'{name}\n(MSE: {metrics["mse"]:.4f}, MAE: {metrics["mae"]:.4f}, R2: {metrics["r2"]:.4f})', fontsize=10)
-            plt.xlabel('Actual')
-            plt.ylabel('Predicted')
-            st.pyplot(plt)
-            plt.close()
+                # plot individual model
+                plt.figure(figsize=(10, 6))
+                plt.scatter(y_test, y_pred, alpha=0.7, edgecolors='k')
+                plt.plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--')
+                plt.title(f'{name}\n(MSE: {metrics["mse"]:.4f}, MAE: {metrics["mae"]:.4f}, R2: {metrics["r2"]:.4f})', fontsize=10)
+                plt.xlabel('Actual')
+                plt.ylabel('Predicted')
+                st.pyplot(plt)
+                plt.close()
 
             # Plot predictions vs actuals
             ax = axes[i]
@@ -187,14 +281,15 @@ def validate_model(models, features, target, title, save_model=False):
             # Update progress
             progress_bar.progress((i + 1) / len(models))
 
-        # Finalize and show plot
-        plt.suptitle(f'Model Performance Comparison for {title}')
-        plt.tight_layout()
-        plt.figtext(0.5, 0.005,
-                    'Scatter plots comparing predicted vs actual values. Red dashed line shows perfect predictions.',
-                    ha='center', fontsize=10)
-        st.pyplot(fig)
-        plt.close()
+        with st.spinner(f"Plotting {name} predictions..."):
+            # Finalize and show plot
+            plt.suptitle(f'Model Performance Comparison for {title}')
+            plt.tight_layout()
+            plt.figtext(0.5, 0.005,
+                        'Scatter plots comparing predicted vs actual values. Red dashed line shows perfect predictions.',
+                        ha='center', fontsize=10)
+            st.pyplot(fig)
+            plt.close()
 
         # Save best model if requested
         if save_model and best_model:
@@ -240,22 +335,46 @@ def validate_model(models, features, target, title, save_model=False):
 
         status_text.success("Model validation complete!")
 
+        time.sleep(2)
+        progress_bar.empty()
+        status_text.empty()
+
         return best_model
+    except Exception as e:
+        st.error(f"Error training model: {str(e)}")
+        progress_bar.empty()
+        status_text.empty()
+        st.stop()
 
 def show():
     
     with st.form("train_model"):
-        # country name
-        country_name = st.text_input("Enter the title of the dataset", value=DEFAULT_COUNTRY_NAME,
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # country name
+            country_name = st.text_input("Enter the title of the dataset", value=DEFAULT_COUNTRY_NAME,
                                      help="This is the name of the country/region/title that the dataset belongs to")
+        with col2:
+            # target column
+            TARGET_COLUMN = st.selectbox("Select the target variable", 
+                                            options=['orgc', 'tceq'], 
+                                            index=0,
+                                            help="Select the target variable to predict")
         # file uploader
-        dataset_file = st.file_uploader("Upload the combined data", type=["csv", "gpkg"], help="This is the combined dataset of all properties in the country")
-
+        dataset_file = st.file_uploader("Upload the combined data", type=["csv", "gpkg"], help="This is the combined dataset of all properties in the country including temperature, precipitation, ecoregions and soil properties")
+        
         submitted = st.form_submit_button("Begin Model Training", type="primary")
+        
         # set session state
         st.session_state['submitted'] = submitted
     
     if st.session_state['submitted']:
+        if TARGET_COLUMN is None:
+            st.error("Please select a target variable")
+            st.stop()
+
         if dataset_file is not None:
             with st.spinner('Processing uploaded file...'):
                 if dataset_file.name.endswith('.csv') or dataset_file.name.endswith('.gpkg'):
@@ -280,14 +399,10 @@ def show():
                 if dataset_file.name.endswith(".csv"):
                     df = pd.read_csv(dataset_file)
                 elif dataset_file.name.endswith(".gpkg"):
-
                     df = gpd.read_file(dataset_file)
             else:
                 st.error("Please upload a valid dataset")
                 st.stop()
-
-            # replace invalid dates
-            df['date'] = df['date'].apply(replace_invalid_dates)
 
             ######### SECTION 1: PREPROCESSING ANALYSIS #########
             st.header("Preprocessing Analysis")
@@ -311,34 +426,32 @@ def show():
                     st.pyplot(plt)
 
             with st.spinner('Preprocessing data...'):
-                df = preprocess_data(df)
-
+                
                 with st.expander("Learn more about the preprocessing steps"):
                     st.write("""
                         ### Preprocessing Steps
                         
                         The preprocessing steps are as follows:
                         
-                        - Replace invalid dates with random valid dates within a specified range
-                        - Remove non-numeric columns
-                        - Drop the complementary carbon variable to avoid data leakage
-                        - Scale the data using StandardScaler
-                        - Split the data into features and target variables
-                        - Save the processed dataset in the session state
-                        - Save the features and target variable in the session state
-                        - Return the scaled dataset, features, and target variable
+                        - Drop rows with invalid dates
+                        - Drop columns with more than 70% missing values
+                        - Check if the target variable is in the dataset
+                        - Drop rows with missing target variable
+                        - Drop duplicate rows
+                        - Final dataset shape is displayed
 
                     """)
+                
+                df = preprocessing_analysis(df, TARGET_COLUMN, DROP_COLUMNS)
+
+                st.subheader("Preprocessed Dataset")
+                st.dataframe(df, use_container_width=True)
 
                 # if the dataset is empty, then stop
                 if df.empty:
                     st.error(f"The dataset is empty after preprocessing {df.shape[0]} rows × {df.shape[1]} columns")
                     st.dataframe(df)
                     st.stop()
-
-                if not df.empty:
-                    st.success(f"Preprocessing complete!\n"
-                    f"Final dataset shape: {df.shape[0]} rows × {df.shape[1]} columns")
             
             ######### SECTION 2: DISTRIBUTION ANALYSIS #########
             st.header("Distribution Analysis")
@@ -354,7 +467,7 @@ def show():
                 """)
 
                 with st.spinner("Plotting distribution charts..."):
-                    fig = plot_distribution_charts(df.select_dtypes(include=['number']).columns, df, "Distribution of numeric columns")
+                    fig = plot_distribution_charts(df.select_dtypes(include=['number']).columns.tolist(), df, country_name)
                     st.pyplot(fig)
 
             ######### SECTION 3: MODEL CONFIGURATION #########
@@ -375,27 +488,19 @@ def show():
                     
                     __Note:__ Ensure your dataset has sufficient samples and minimal missing values for reliable model training.
                     """)
-            
-            target_variable = st.selectbox("Select the target variable", 
-                                            options=df.columns, 
-                                            index=df.columns.get_loc("orgc") if "orgc" in df.columns else 0,
-                                            help="Select the target variable to predict")
-            if target_variable is None:
-                st.error("Please select a target variable")
-                st.stop()
 
             # scale and split the dataset
             with st.spinner("Scaling and splitting the dataset..."):
-                scaled_dataset, X_scaled, y = split_and_scale_data(df, target_variable)
+                scaled_dataset, X_scaled, y = split_and_scale_data(df, TARGET_COLUMN)
 
             # preview the scaled dataset
             st.write("""
                 A preview of the scaled dataset.
             """)
-            st.dataframe(scaled_dataset)
+            st.dataframe(scaled_dataset, use_container_width=True)
 
             # validate models
-            model_title = f"{country_name}_{target_variable}"
+            model_title = f"{country_name}_{TARGET_COLUMN}"
             validate_model(MODELS_LIST, X_scaled, y, model_title, save_model=True)
                 
         except Exception as e:
@@ -410,26 +515,5 @@ if __name__ ==  "__main__":
 
                  - Ensure the data is generated using the `Soil Data Selector` and parsed using the `Weather Data Selector` tool for best results.
                  """)
-
-    MODELS_LIST = {
-        'Random Forest Regressor': RandomForestRegressor(),
-        'Gradient Boosting Regressor': GradientBoostingRegressor(),
-        'Linear Regression': LinearRegression(),
-        'Support Vector Regressor': SVR(),
-        'K-Nearest Neighbors Regressor': KNeighborsRegressor()
-    }
-    DEFAULT_DATA_PATH = "" #"data/mexico_combined_data.csv"
-    DEFAULT_COUNTRY_NAME = "Mexico"
-    DEFAULT_TARGET_VARIABLES = ["orgc"]
-    TEST_SIZE = 0.3
-    RANDOM_STATE = 42
-
-    # create required folders
-    os.makedirs("outputs", exist_ok=True)
-    os.makedirs("models", exist_ok=True)
-    
-    # database
-    db_type = os.getenv('DB_TYPE')
-    DB = get_db(db_type)
 
     show()

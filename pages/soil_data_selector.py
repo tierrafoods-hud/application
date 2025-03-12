@@ -12,6 +12,43 @@ logging.basicConfig(level=logging.INFO, format='%(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 
+# Define constants
+WOSIS_DEC_2023_PATH = "./data/WoSIS_2023_December/wosis_202312.gpkg"
+PREFIX_LAYER_NAME = "wosis_202312_"
+OUTPUT_PATH = "../outputs/"
+DEFAULT_LAYERS = ["bdfiad", "bdfiod", "bdwsod", "cecph7", "cecph8", "cfvo", "clay", "ecec", "elco50", "nitkjd", "orgc", "orgm", 
+                "phaq", "phetm3", "sand", "silt", "tceq", "totc", "wv0010", "wv0033", "wv1500"]
+REQUIRED_COLUMNS = [
+        'date', 'longitude', 'latitude',
+        'upper_depth', 'lower_depth',
+        'country_name', 'region', 'continent',
+        'value_avg'
+    ]
+DEFAULT_START_DATE = pd.to_datetime("2000-01-01")
+DEFAULT_END_DATE = pd.to_datetime("2023-12-31")
+DATA_TYPE_SPECIFICATIONS = {
+    'date': 'str',
+    'longitude': 'float32',
+    'latitude': 'float32',
+    'country_name': 'category',
+    'region': 'category',
+    'continent': 'category',
+    'upper_depth': 'float32',
+    'lower_depth': 'float32',
+    'value_avg': 'float32'
+}
+DEFAULT_COUNTRY_NAME = "Mexico"
+DEFAULT_BOUNDING_BOX = [-117.12776, 14.5388286402, -86.811982388, 32.72083]
+
+
+def get_country_list():
+    """
+    Load and return a list of countries from a CSV file.
+    @return The list of countries.
+    """
+    countries = pd.read_csv("./datasets/countries_list.csv")
+    return countries
+
 def validate_config(input_file: str, layer_prefix: str, default_layers: List[str],
     required_columns: List[str], output_path: str, country_name: str, bounding_box: Optional[List[float]]
 ) -> Tuple[str, str, Optional[List[float]]]:
@@ -111,29 +148,19 @@ def process_layer(input_file: str, layer: str, layer_prefix: str, country_name: 
 def show():
     st.header("Soil Data Configurations")
     
-    col1, col2 = st.columns(2)
-    with col1:
-        input_file = st.text_input(
-            "Input File Path",
-            value=WOSIS_DEC_2023_PATH,
-            help="Path to WoSIS GeoPackage file (local file path required due to size)"
-        )
+    # input file
+    input_file = WOSIS_DEC_2023_PATH
 
-    with col2:
-        layer_prefix = st.text_input(
-            "Layer Prefix",
-            value=PREFIX_LAYER_NAME,
-            help="Prefix for layer names in the GeoPackage"
-        )
+    # layer prefix
+    layer_prefix = PREFIX_LAYER_NAME
 
     col1, col2 = st.columns(2, vertical_alignment="bottom")
 
     # Geographic Filtering
     with col1:
-        country_name = st.text_input("Country Name", value=DEFAULT_COUNTRY_NAME)
+        country_name = st.selectbox("Country", get_country_list()['country_name'].unique(), index=92) # default 92 = Mexico
     with col2:
         use_bounding_box = st.checkbox("Use Bounding Box")
-
 
     bounding_box = None
     if use_bounding_box:
@@ -151,9 +178,9 @@ def show():
     # Date Range
     col1, col2 = st.columns(2)
     with col1:
-        start_date = st.date_input("Start Date", value=DEFAULT_START_DATE)
+        start_date = st.date_input("Start Date", value=DEFAULT_START_DATE, max_value="today")
     with col2:
-        end_date = st.date_input("End Date", value=DEFAULT_END_DATE)
+        end_date = st.date_input("End Date", value=DEFAULT_END_DATE, max_value="today")
 
 
     # Depth Filtering
@@ -224,6 +251,8 @@ def show():
                 master_df.to_csv(csv_file, index=False)
 
                 ##  FUTURE: Save to Database
+                # save to database code goes here; uncomment when ready
+
                 st.session_state[f"{country_name}_soil_data"] = master_df
                 st.session_state['processed_files'] = {
                     'gpkg': output_file,
@@ -232,6 +261,8 @@ def show():
                 }
                 
                 status_text.success("Processing complete! Download the data below.")
+                # empty progress bar
+                progress_bar.empty()
             else:
                 status_text.warning("No data found for any layers")
 
@@ -263,34 +294,6 @@ def show():
             )
 
 if __name__ == "__main__":
-    # Define constants
-    WOSIS_DEC_2023_PATH = "./data/WoSIS_2023_December/wosis_202312.gpkg"
-    PREFIX_LAYER_NAME = "wosis_202312_"
-    OUTPUT_PATH = "../outputs/"
-    DEFAULT_LAYERS = ["bdfiad", "bdfiod", "bdwsod", "cecph7", "cecph8", "cfvo", "clay", "ecec", "elco50", "nitkjd", "orgc", "orgm", 
-                    "phaq", "phetm3", "sand", "silt", "tceq", "totc", "wv0010", "wv0033", "wv1500"]
-    REQUIRED_COLUMNS = [
-            'date', 'longitude', 'latitude',
-            'upper_depth', 'lower_depth',
-            'country_name', 'region', 'continent',
-            'value_avg'
-        ]
-    DEFAULT_START_DATE = pd.to_datetime("1900-01-01")
-    DEFAULT_END_DATE = pd.to_datetime("2023-12-31")
-    DATA_TYPE_SPECIFICATIONS = {
-        'date': 'str',
-        'longitude': 'float32',
-        'latitude': 'float32',
-        'country_name': 'category',
-        'region': 'category',
-        'continent': 'category',
-        'upper_depth': 'float32',
-        'lower_depth': 'float32',
-        'value_avg': 'float32'
-    }
-    DEFAULT_COUNTRY_NAME = "Mexico"
-    DEFAULT_BOUNDING_BOX = [-117.12776, 14.5388286402, -86.811982388, 32.72083]  
-
     # page config
     sidebar(title="Soil Data Selector")
 
