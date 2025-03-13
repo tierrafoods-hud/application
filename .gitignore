@@ -8,3 +8,4 @@ __pycache__/
 .env.local
 .env.development
 .env.production
+assets/templates/test_dataset_template.csv
