@@ -15,7 +15,6 @@ load_dotenv()
 
 CATEGORICAL_FEATURES = ["landcover", "zone_number"]
 
-@st.cache_data
 def load_models():
     query = "SELECT * FROM models order by last_updated desc"
     models = DB.fetchAllAsDict(query)
