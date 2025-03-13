@@ -8,7 +8,7 @@ import pandas as pd
 load_dotenv()
 
 def get_models():
-    query = "SELECT * FROM models order by title"
+    query = "SELECT * FROM models order by last_updated desc"
     models = DB.fetchAllAsDict(query)
     return models
 
@@ -54,21 +54,16 @@ def show():
                     col3.metric("R2", f"{metrics['r2']:.2f}")
 
                     model_path = model['path']
-                    scalar_path = model['scaler']
+                    # scalar_path = model['scaler']
 
-                    if not os.path.exists(model_path) or not os.path.exists(scalar_path):
-                        st.warning(f"Model file or scaler file not found for {model['title']}. Please retrain the model.")
-                        continue
+                    # if not os.path.exists(model_path) or not os.path.exists(scalar_path):
+                    #     st.warning(f"Model file or scaler file not found for {model['title']}. Please retrain the model.")
+                    #     continue
 
-                    col1, col2 = st.columns(2)
+                    # col1, col2 = st.columns(2)
                     # download button
-                    with col1:
-                        with open(model_path, 'rb') as f:
-                            st.download_button(label="Download Model", data=f, file_name=f"{model['title']}.pkl", key=model['id'])
-                    # download scaler
-                    with col2:
-                        with open(scalar_path, 'rb') as f:
-                            st.download_button(label="Download Scaler", data=f, file_name=f"{model['title']}_scaler.pkl", key=f"{model['id']}_scaler")
+                    with open(model_path, 'rb') as f:
+                        st.download_button(label="Download Model", data=f, file_name=f"{model['title']}.pkl", key=model['id'])
             
 if __name__ == "__main__":
     # database

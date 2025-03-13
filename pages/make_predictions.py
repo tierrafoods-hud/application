@@ -4,17 +4,20 @@ from config.database import get_db
 from dotenv import load_dotenv
 import os, json, joblib
 import pandas as pd
-from utils.helper import replace_invalid_dates, folium_map, calculate_horizon_fractions, calculate_SOC_stocks
+from utils.helper import calculate_confidence_score, folium_map, calculate_horizon_fractions, calculate_SOC_stocks
 import matplotlib.pyplot as plt
 import geopandas as gpd
 import utils.grids as grids
 import folium
 import numpy as np
+
 load_dotenv()
+
+CATEGORICAL_FEATURES = ["landcover", "zone_number"]
 
 @st.cache_data
 def load_models():
-    query = "SELECT * FROM models order by title"
+    query = "SELECT * FROM models order by last_updated desc"
     models = DB.fetchAllAsDict(query)
     return models
 
@@ -22,7 +25,10 @@ def select_model():
     models = load_models()
     model_list = {}
     for model in models:
-        model_list[f"{model['title']} ({model['model_type']})"] = model
+        if not os.path.exists(model['path']):
+            continue
+
+        model_list[f"{model['title']} ({model['model_type']}) - {model['last_updated']}"] = model
     
     # empty model_list
     if not model_list:
@@ -34,60 +40,39 @@ def select_model():
     model_path = selected_model["path"]
     
     if os.path.exists(model_path):
-
         model = joblib.load(model_path)
-        return model, selected_model
+        if isinstance(model, dict) and 'features' in model:
+            print(model['features'])
+            return model, selected_model
+        else:
+            st.error("Invalid model format. 'features' key not found.")
+            st.stop()
     else:
         st.error(f"Model file not found at: {model_path}")
-        return None
-
-def load_scaler(scaler_path):
-    if os.path.exists(scaler_path):
-        scaler = joblib.load(scaler_path)
-
-        return scaler
-    else:
-        st.error(f"Scaler file not found at: {scaler_path}")
-        return None
+        st.stop()
     
-def preprocess_data(dataset, model_features):
-    # check if silt_plus_clay column is present
-    if 'silt_plus_clay' not in dataset.columns:
-        # Handle silt and clay columns if present
-        if {'silt', 'clay'}.issubset(dataset.columns):
-            dataset['silt_plus_clay'] = dataset[['silt', 'clay']].sum(axis=1, skipna=True)
-            dataset.drop(columns=['silt', 'clay'], inplace=True)
-
-    # Calculate organic matter metrics if orgc present
-    if 'orgc' in dataset.columns:
-        # Use vectorized operations for better performance
-        organic_matter = 1.724 * dataset['orgc']
-        dataset = dataset.assign(
-            organic_matter=organic_matter,
-            bulk_density=1.62 - 0.06 * organic_matter
-        )
-    else:
-        dataset = dataset.assign(
-            organic_matter=1.724,
-            bulk_density=1.62
-        )
+def preprocess_data(dataset, model):
+    model_features = model['features']
+    encoder = model['encoder']
 
     # check if the dataset has the same columns as the training dataset
     missing_cols = set(model_features) - set(dataset.columns)
     if missing_cols:
-
         st.error(f"The dataset is missing the following columns: {', '.join(missing_cols)}")
-    
-    # check date in the dataset
-    if "date" not in dataset.columns:
-        st.error("The dataset has no date column")
-        st.stop()
 
-    # replace invalid dates
-    dataset['date'] = dataset['date'].apply(replace_invalid_dates)
+        add_missing_cols = st.button("Add missing columns", help="Click to add missing columns to the dataset with 0 values.", key="add_missing_cols")
 
-    # select the features that are in the model
-    dataset[model_features] = dataset[model_features].fillna(dataset[model_features].mean())
+        if add_missing_cols:
+            for col in missing_cols:
+                dataset[col] = 0
+        else:
+            st.stop()
+
+    if set(CATEGORICAL_FEATURES).issubset(dataset.columns):
+        encoded_cols = encoder.fit_transform(dataset[CATEGORICAL_FEATURES])
+        encoded_df = pd.DataFrame(encoded_cols, columns=encoder.get_feature_names_out(CATEGORICAL_FEATURES))
+        df = dataset.drop(columns=CATEGORICAL_FEATURES)
+        return pd.concat([df, encoded_df], axis=1)
 
     return dataset
 
@@ -139,7 +124,7 @@ def show():
     
     with st.spinner("Loading model..."):
         if model:
-            scaler = load_scaler(selected_model['scaler'])
+            scaler = model['scaler']
             if isinstance(selected_model['features'], str):
                 model_features = json.loads(selected_model['features'])
             else:
@@ -156,17 +141,21 @@ def show():
             # Upload a test dataset
             st.write(f"The test dataset should have the following columns: \n{', '.join(col_names)}.")
             st.write("You can download a template dataset from the link below:")
-            
-            with open('assets/templates/test_dataset_template.csv', 'rb') as f:
-                csv_bytes = f.read()
-            
-                st.download_button(
-                    label="Dataset Template",
-                    data=csv_bytes,
-                    file_name=f"test_dataset_template.csv",
-                    mime="text/csv"
-                )
 
+            with st.spinner("Generating template..."):
+                test_dataset_template = pd.DataFrame(columns=col_names)
+                # save the template to a file
+                test_dataset_template.to_csv('assets/templates/test_dataset_template.csv', index=False)
+            
+                with open('assets/templates/test_dataset_template.csv', 'rb') as f:
+                    csv_bytes = f.read()
+                
+                    st.download_button(
+                        label="Dataset Template",
+                        data=csv_bytes,
+                        file_name=f"test_dataset_template.csv",
+                        mime="text/csv"
+                    )
 
             uploaded_file = st.file_uploader("Upload a test dataset", type=["csv", "xlsx"])
             if uploaded_file:
@@ -181,41 +170,52 @@ def show():
                         return
                     
                     with st.spinner("Pre-processing data..."):
-                        dataset = preprocess_data(dataset, model_features)
+                        dataset = preprocess_data(dataset, model)
 
                         st.subheader("Dataset:")
-                        st.write("The pre-processsed dataset as uploaded by you is shown below")
+                        st.write("The pre-processsed dataset is shown below")
                         st.dataframe(dataset)
 
                     with st.spinner("Predicting values..."):
                         # make predictions
+                        model_features = model['model_features']
                         X = dataset[model_features] #  use prediction features
+                        
+                        # st.write("Preview of the dataset being used for prediction.")
+                        # st.dataframe(X, use_container_width=True)
 
-                        # check if dataset has missing values
+                        # Check for missing values in the dataset
                         if X.isnull().any().any():
-                            # Get columns with missing values
                             missing_cols = X.columns[X.isnull().any()].tolist()
-                            st.error(f"The dataset has missing values in the following columns: {', '.join(missing_cols)}. Please check the dataset and try again.")
-                            return
+                            st.error(f"The dataset has missing values in the following columns: {', '.join(missing_cols)}. Please check the dataset and try again OR fill the missing values by clicking the button below.")
+                            if st.button("Fill Missing Values", help="Click to fill missing values with column means and continue with predictions."):
+                                X.fillna(X.mean(), inplace=True)
+                            else:
+                                st.stop()
 
+                        ML_MODEL = model['model']
                         X_scaled = scaler.transform(X)
-                        predictions = model.predict(X_scaled)
+
+                        # st.write("Preview of the datased being used for prediction.")
+                        # st.dataframe(X_scaled, use_container_width=True)
+
+                        predictions = ML_MODEL.predict(X_scaled)
 
                         # add predictions to the dataset
                         dataset[predicted_column] = predictions
                         
                         # calculate the fractions of the upper and lower depths
-                        dataset['depths_fractions'] = calculate_horizon_fractions(dataset['upper_depth'], dataset['lower_depth'])
+                        # dataset['depths_fractions'] = calculate_horizon_fractions(dataset['upper_depth'], dataset['lower_depth'])
                         # rock fragment volume
-                        dataset['rock_fragment_volume'] = np.random.uniform(1, 2, size=len(dataset)) # need to get this from the dataset
+                        # dataset['rock_fragment_volume'] = np.random.uniform(1, 2, size=len(dataset)) # need to get this from the dataset
 
                         # calculate the SOC stocks for each row
-                        dataset['SOC_stocks_t/ha'] = dataset.apply(lambda row: calculate_SOC_stocks(
-                            row['depths_fractions'],
-                            row['bulk_density'],
-                            row[predicted_column],
-                            row['rock_fragment_volume']
-                        ), axis=1)
+                        # dataset['SOC_stocks_t/ha'] = dataset.apply(lambda row: calculate_SOC_stocks(
+                        #     row['depths_fractions'],
+                        #     row['bulk_density'],
+                        #     row[predicted_column],
+                        #     row['rock_fragment_volume']
+                        # ), axis=1)
 
                         # convert the units and store in a new column
                         # dataset[f'{model_target}_t/ha'] = dataset[predicted_column] * 100
@@ -224,88 +224,92 @@ def show():
                         st.write(f"The predictions for {model_target} are shown below")
                         st.dataframe(dataset)
 
+                        confidence = calculate_confidence_score(ML_MODEL, X)
+                        st.write(f"Model confidence score: {confidence:.2f}")
+                        st.write("Output Score Range: Between 0 and 1 (higher = more confident)")
+
                     # if the dataset has the target column plot the predictions vs the target
-                    # if model_target in dataset.columns:
-                    #     st.subheader("Predictions vs Target:")
-                    #     fig, ax = plt.subplots(figsize=(10, 6))
-                    #     ax.scatter(dataset[model_target], dataset[f'{model_target}_predicted'], alpha=0.7, edgecolors='k')
-                    #     ax.plot([dataset[model_target].min(), dataset[model_target].max()], 
-                    #         [dataset[model_target].min(), dataset[model_target].max()], 
-                    #         'r--', label='Perfect Prediction')
-                    #     ax.set_xlabel(f'Actual {model_target}')
-                    #     ax.set_ylabel(f'Predicted {model_target}')
-                    #     ax.legend()
-                    #     st.pyplot(fig)
-                    #     plt.close()
+                    if model_target in dataset.columns:
+                        test_column = dataset[model_target]
+                        st.subheader("Predictions vs Target:")
+                        plt.figure(figsize=(10, 6))
+                        plt.scatter(test_column, predictions, alpha=0.7, edgecolors='k')
+                        plt.plot([test_column.min(), test_column.max()], [test_column.min(), test_column.max()], 'r--')
+                        plt.xlabel(f'Actual {model_target}')
+                        plt.ylabel(f'Predicted {model_target}')
+                        st.pyplot(plt)
+                        plt.close()
 
                     #     st.subheader("Acctuals and Predictions:")
                     #     st.dataframe(dataset[['date', model_target, f'{model_target}_predicted']])
 
                     # get unique upper_depth
-
-                    with st.spinner("Generating depth profile and visualization..."):
-                        st.subheader("Depth Profile and Visualization")
-                        soil_ranges = [
-                            "0-5cm",
-                            "5-15cm",
-                            "15-30cm"
-                        ]
-
-                        col1, col2 = st.columns(2, gap="small", vertical_alignment="bottom")
-                        with col1:
-                            aggregate = st.checkbox("Aggregate", help="Aggregate the predictions by latitude and longitude ignoring the upper and lower depths", value=True)
-                        with col2:
-                            if not aggregate:
-                                col1, col2 = st.columns(2, gap="small", vertical_alignment="bottom")
-                                with col1:
-                                    upper_depth = st.number_input("Upper depth (in cm)", min_value=0, max_value=100, value=5)
-                                with col2:
-                                    lower_depth = st.number_input("Lower depth (in cm)", min_value=0, max_value=100, value=15)
-
-                        spatial_dataset = dataset.copy()
-
-                        if aggregate:
-                            # aggregate the predictions by latitude and longitude
-                            predicted_mean = predicted_column + '_mean'
-                            grouped = spatial_dataset.groupby(['latitude', 'longitude'])[predicted_column].mean().reset_index()
-                            spatial_dataset = spatial_dataset.merge(grouped, on=['latitude', 'longitude'], how='left', suffixes=('', '_mean'))
-                            spatial_dataset[predicted_column] = spatial_dataset[predicted_mean]
-                            spatial_dataset.drop(columns=[predicted_mean], inplace=True)
-
-                        else:
-                            # filter the dataset by the selected upper and lower depths
-                            # upper_depth = int(soil_depth.split('-')[0])
-                            # lower_depth = int(soil_depth.split('-')[1][:-2])  # Remove 'cm' suffix
-
-                            spatial_dataset = spatial_dataset[(spatial_dataset['lower_depth'] >= lower_depth) & (spatial_dataset['upper_depth'] <= upper_depth)]
-
-
-                    with st.spinner("Generating map..."):
-                        # generate a folium heatmap
-                        map = folium_map(spatial_dataset, predicted_column)
-                        st.write("Heatmap of the predictions for the selected depth profile or aggregated predictions")
-                        st.components.v1.html(map._repr_html_(), height=450)
                     
-                    with st.spinner("Generating points..."):
-                        # map2
-                        map2 = folium.Map(location=[spatial_dataset['latitude'].mean(), spatial_dataset['longitude'].mean()], zoom_start=4)
-                        datapoints = folium.map.FeatureGroup()
-                        for index, row in spatial_dataset.iterrows():
-                            datapoints.add_child(
-                                folium.features.CircleMarker(
-                                    [row['latitude'], row['longitude']],
-                                    radius=5,
-                                    color='red',
-                                    fill=True,
-                                    fill_color='blue',
-                                    fill_opacity=0.6,
-                                    popup=f"{predicted_column}: {row[predicted_column]:.2f}"
-                                )
-                            )
+                    depth_profile_columns = ['latitude', 'longitude', 'upper_depth', 'lower_depth']
+                    if set(depth_profile_columns).issubset(dataset.columns):
+                        with st.spinner("Generating depth profile and visualization..."):
+                            st.subheader("Depth Profile and Visualization")
+                            soil_ranges = [
+                                "0-5cm",
+                                "5-15cm",
+                                "15-30cm"
+                            ]
 
-                        map2.add_child(datapoints)
-                        st.write("Points of the dataset")
-                        st.components.v1.html(map2._repr_html_(), height=450)
+                            col1, col2 = st.columns(2, gap="small", vertical_alignment="bottom")
+                            with col1:
+                                aggregate = st.checkbox("Aggregate", help="Aggregate the predictions by latitude and longitude ignoring the upper and lower depths", value=True)
+                            with col2:
+                                if not aggregate:
+                                    col1, col2 = st.columns(2, gap="small", vertical_alignment="bottom")
+                                    with col1:
+                                        upper_depth = st.number_input("Upper depth (in cm)", min_value=0, max_value=100, value=5)
+                                    with col2:
+                                        lower_depth = st.number_input("Lower depth (in cm)", min_value=0, max_value=100, value=15)
+
+                            spatial_dataset = dataset.copy()
+
+                            if aggregate:
+                                # aggregate the predictions by latitude and longitude
+                                predicted_mean = predicted_column + '_mean'
+                                grouped = spatial_dataset.groupby(['latitude', 'longitude'])[predicted_column].mean().reset_index()
+                                spatial_dataset = spatial_dataset.merge(grouped, on=['latitude', 'longitude'], how='left', suffixes=('', '_mean'))
+                                spatial_dataset[predicted_column] = spatial_dataset[predicted_mean]
+                                spatial_dataset.drop(columns=[predicted_mean], inplace=True)
+
+                            else:
+                                # filter the dataset by the selected upper and lower depths
+                                # upper_depth = int(soil_depth.split('-')[0])
+                                # lower_depth = int(soil_depth.split('-')[1][:-2])  # Remove 'cm' suffix
+
+                                spatial_dataset = spatial_dataset[(spatial_dataset['lower_depth'] >= lower_depth) & (spatial_dataset['upper_depth'] <= upper_depth)]
+
+
+                        with st.spinner("Generating map..."):
+                            # generate a folium heatmap
+                            map = folium_map(spatial_dataset, predicted_column)
+                            st.write("Heatmap of the predictions for the selected depth profile or aggregated predictions")
+                            st.components.v1.html(map._repr_html_(), height=450)
+                        
+                        with st.spinner("Generating points..."):
+                            # map2
+                            map2 = folium.Map(location=[spatial_dataset['latitude'].mean(), spatial_dataset['longitude'].mean()], zoom_start=4)
+                            datapoints = folium.map.FeatureGroup()
+                            for index, row in spatial_dataset.iterrows():
+                                datapoints.add_child(
+                                    folium.features.CircleMarker(
+                                        [row['latitude'], row['longitude']],
+                                        radius=5,
+                                        color='red',
+                                        fill=True,
+                                        fill_color='blue',
+                                        fill_opacity=0.6,
+                                        popup=f"{predicted_column}: {row[predicted_column]:.2f}"
+                                    )
+                                )
+
+                            map2.add_child(datapoints)
+                            st.write("Points of the dataset")
+                            st.components.v1.html(map2._repr_html_(), height=450)
                     
                     # with st.spinner("Generating grids..."):
                         # generate grids dataframe
