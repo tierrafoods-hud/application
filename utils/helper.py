@@ -8,6 +8,12 @@ import streamlit as st # type: ignore
 import folium
 from folium.plugins import HeatMap
 import numpy as np
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+from sklearn.linear_model import LinearRegression
+from sklearn.svm import SVR
+from sklearn.neighbors import KNeighborsRegressor
+from sklearn.neural_network import MLPRegressor
 
 def filter_by_country(df: pd.DataFrame, country_name: str) -> Optional[pd.DataFrame]:
     """
@@ -198,7 +204,7 @@ def calculate_SOC_stocks(p, BD, SOC, rf):
     # Multiply by 1 to directly get t/ha (tons per hectare)
     SOC_stock = np.sum(p * BD * SOC * (1 - rf))
     # print the calculation for manual verification
-    print(f"{p} * {BD} * {SOC} * (1 - {rf}) = {SOC_stock}")
+    # print(f"{p} * {BD} * {SOC} * (1 - {rf}) = {SOC_stock}")
 
     return SOC_stock
 
@@ -221,3 +227,37 @@ def calculate_horizon_fractions(upper_depth, lower_depth, total_depth=30):
     fractions = horizon_depths / total_depth
     
     return fractions
+
+def preprocess_categorical(df, categorical_features):
+    # df[categorical_features] = df[categorical_features].astype(str)
+    encoder = OneHotEncoder(drop='first', sparse_output=False)
+    encoded_cols = encoder.fit_transform(df[categorical_features])
+    encoded_df = pd.DataFrame(encoded_cols, columns=encoder.get_feature_names_out(categorical_features))
+    df = df.drop(columns=categorical_features)
+    return pd.concat([df, encoded_df], axis=1), encoder
+
+def calculate_confidence_score(model, X):
+    """
+    Calculate a confidence score for predictions based on the model type.
+    
+    Parameters:
+        model: Trained model (must be from MODELS_LIST)
+        X: Scaled input features (numpy array or DataFrame)
+    
+    Returns:
+        Mean confidence score (higher = more confident)
+    """
+    if isinstance(model, (RandomForestRegressor, GradientBoostingRegressor)):
+        # Tree-based models: Measure variability across decision trees
+        pred_leafs = model.apply(X)  # Get the decision path for each tree
+        confidence_scores = np.std(pred_leafs, axis=1)  # Higher std = lower confidence
+        return 1 / (1 + np.mean(confidence_scores))  # Normalize confidence (0 to 1)
+
+    elif isinstance(model, (LinearRegression, SVR, KNeighborsRegressor, MLPRegressor)):
+        # Non-tree models: Use prediction variance
+        preds = model.predict(X)
+        confidence_scores = np.std(preds)  # Higher std = lower confidence
+        return 1 / (1 + confidence_scores)  # Normalize confidence (0 to 1)
+
+    else:
+        raise ValueError(f"Model type {type(model)} is not supported.")

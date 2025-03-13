@@ -2,7 +2,7 @@ import streamlit as st # type: ignore
 from utils.sidebar_menu import sidebar
 import pandas as pd
 import geopandas as gpd
-from utils.helper import plot_distribution_charts, replace_invalid_dates, preprocess_data
+from utils.helper import plot_distribution_charts, preprocess_categorical
 import matplotlib.pyplot as plt
 import seaborn as sns
 import joblib
@@ -133,22 +133,22 @@ def split_and_scale_data(df, target_variable):
     def save_to_session(key, value):
         st.session_state[key] = value
 
-    def preprocess_categorical(df, categorical_features):
-        # df[categorical_features] = df[categorical_features].astype(str)
-        encoder = OneHotEncoder(drop='first', sparse_output=False)
-        encoded_cols = encoder.fit_transform(df[categorical_features])
-        encoded_df = pd.DataFrame(encoded_cols, columns=encoder.get_feature_names_out(categorical_features))
-        df = df.drop(columns=categorical_features)
-        return pd.concat([df, encoded_df], axis=1), encoder
-
     df.to_csv(f"outputs/processed_data_{target_variable}.csv", index=False)
     save_to_session(f'{target_variable}_dataset', df.copy())
 
-    if set(CATEGORICAL_FEATURES).issubset(df.columns):
-        df, encoder = preprocess_categorical(df, CATEGORICAL_FEATURES)
-        save_to_session('_encoder', encoder)
+    # remove longitude and latitude columns
+    df = df.drop(columns=['longitude', 'latitude'], errors='ignore')
 
     NUMERIC_FEATURES = [col for col in df.select_dtypes(include=['number']).columns.tolist() if col != target_variable]
+    _features = NUMERIC_FEATURES
+
+    if set(CATEGORICAL_FEATURES).issubset(df.columns):
+        _features.extend(CATEGORICAL_FEATURES)
+        df, encoder = preprocess_categorical(df, CATEGORICAL_FEATURES)
+        save_to_session('_encoder', encoder)
+    
+    NUMERIC_FEATURES = [col for col in df.select_dtypes(include=['number']).columns.tolist() if col != target_variable]
+
     df = df[NUMERIC_FEATURES + [target_variable]]
 
     X = df.drop(columns=[target_variable], errors='ignore')
@@ -161,29 +161,31 @@ def split_and_scale_data(df, target_variable):
     scaled_dataset = pd.DataFrame(X_scaled, columns=X.columns)
     scaled_dataset[target_variable] = y.values
 
-    save_to_session(f'{target_variable}_scaled_dataset', scaled_dataset)
-    save_to_session('_features', X)
+    print("_features", _features)
+
+    save_to_session(f'{target_variable}_scaled_dataset', df)
+    save_to_session('_model_features', X.columns.to_list())
+    save_to_session('_features', _features)
     save_to_session('_target', y)
 
-    return scaled_dataset, X_scaled, y
+    return scaled_dataset, X, y
 
-def save_model_to_db(title, model_type, features, target, scaler, metrics, model_path):
+def save_model_to_db(title, model_type, features, target, metrics, model_path):
     """
     Save model metadata to database
     """
     model_data = {
         'title': title,
         'model_type': model_type,
-        'features': features.columns.tolist(),
+        'features': features,
         'target': target.name,
-        'scaler': scaler,
         'metrics': metrics,
         'path': model_path
     }
     
     query = """
-    INSERT INTO models (title, model_type, features, target, scaler, metrics, path) 
-    VALUES (%(title)s, %(model_type)s, %(features)s, %(target)s, %(scaler)s, %(metrics)s, %(path)s)
+    INSERT INTO models (title, model_type, features, target, metrics, path) 
+    VALUES (%(title)s, %(model_type)s, %(features)s, %(target)s, %(metrics)s, %(path)s)
     """
     model_data['features'] = json.dumps(model_data['features'])
     model_data['metrics'] = json.dumps(model_data['metrics'])
@@ -248,6 +250,7 @@ def validate_model(models, features, target, title, save_model=False):
                 best_model = model
                 best_model_type = name
                 best_score = metrics['mae']
+                best_metrics = metrics
 
             with st.spinner(f"Plotting {name} model..."):
                 st.subheader(f"Model: {name}")
@@ -295,15 +298,23 @@ def validate_model(models, features, target, title, save_model=False):
         if save_model and best_model:
             status_text.text('Saving best model...')
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            model_name = f"{title}_best_model_{timestamp}.pkl"
+            model_name = f"{title}_{best_model_type}_{timestamp}.pkl".replace(" ", "_").lower()
             os.makedirs('models', exist_ok=True)
             model_path = f'models/{model_name}'
             st.session_state[title] = best_model
-            joblib.dump(best_model, model_path)
 
-            # save the scalar to storage
-            scalar_path = f'models/{title}_scaler_{timestamp}.pkl'
-            joblib.dump(st.session_state['_scaler'], scalar_path)
+            trained_model = {
+                                "model": best_model,
+                                "name": model_name,
+                                "path": model_path,
+                                "metrics": best_metrics,
+                                "features": st.session_state['_features'],
+                                "model_features": st.session_state['_model_features'],
+                                "target": st.session_state['_target'],
+                                "scaler": st.session_state['_scaler'], 
+                                "encoder": st.session_state['_encoder']
+                            }
+            joblib.dump(trained_model, model_path)
             
             # Save model metadata to database
             model_data = save_model_to_db(
@@ -311,8 +322,7 @@ def validate_model(models, features, target, title, save_model=False):
                 best_model_type,
                 st.session_state['_features'],
                 st.session_state['_target'],
-                scalar_path,
-                metrics,
+                best_metrics,
                 model_path
             )
             
@@ -329,9 +339,9 @@ def validate_model(models, features, target, title, save_model=False):
 
             st.write("About the model:")
             st.write(f"Model type: {best_model_type}")
-            st.write(f"Model features: {st.session_state['_features'].columns.tolist()}")
+            st.write(f"Model features: {st.session_state['_features']}")
             st.write(f"Model target: {st.session_state['_target'].name}")
-            st.write(f"Model metrics: {metrics}")
+            st.write(f"Model metrics: {best_metrics}")
 
         status_text.success("Model validation complete!")
 
@@ -495,7 +505,7 @@ def show():
 
             # preview the scaled dataset
             st.write("""
-                A preview of the scaled dataset.
+                A preview of the training dataset.
             """)
             st.dataframe(scaled_dataset, use_container_width=True)
 

@@ -20,7 +20,6 @@ if db_type == 'mysql':
         `model_type` VARCHAR(100) NOT NULL,
         `features` JSON NOT NULL,
         `target` VARCHAR(100) NOT NULL,
-        `scaler` TEXT NULL,
         `metrics` JSON NULL,
         `path` TEXT NOT NULL,
         `last_updated` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -36,7 +35,6 @@ elif db_type == 'postgresql':
         model_type VARCHAR(100) NOT NULL,
         features JSONB NOT NULL,
         target VARCHAR(100) NOT NULL,
-        scaler TEXT NULL,
         metrics JSONB NULL,
         path TEXT NOT NULL,
         last_updated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
