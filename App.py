@@ -5,10 +5,9 @@ sidebar(layout_style="wide")
 
 st.title("Tierrasphere Carbon Capture Prediction Application")
 
-
 st.subheader("Contributors")
 
-st.write("This application was developed by the [University of Huddersfield](https://www.hud.ac.uk/) in collaboration with [Tierrasphere](https://www.tierrasphere.com/).")
+st.write("This application is developed by the [University of Huddersfield](https://www.hud.ac.uk/) in collaboration with [Tierrasphere](https://www.tierrasphere.com/).")
 
 st.subheader("Contact")
 

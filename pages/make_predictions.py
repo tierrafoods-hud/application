@@ -144,6 +144,7 @@ def show():
             with st.spinner("Generating template..."):
                 test_dataset_template = pd.DataFrame(columns=col_names)
                 # save the template to a file
+                os.makedirs('assets/templates', exist_ok=True)
                 test_dataset_template.to_csv('assets/templates/test_dataset_template.csv', index=False)
             
                 with open('assets/templates/test_dataset_template.csv', 'rb') as f:
