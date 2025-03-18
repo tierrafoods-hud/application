@@ -56,9 +56,9 @@ def show():
                     model_path = model['path']
                     # scalar_path = model['scaler']
 
-                    # if not os.path.exists(model_path) or not os.path.exists(scalar_path):
-                    #     st.warning(f"Model file or scaler file not found for {model['title']}. Please retrain the model.")
-                    #     continue
+                    if not os.path.exists(model_path):
+                        st.warning(f"Model file or scaler file not found for {model['title']}. Please retrain the model.")
+                        continue
 
                     # col1, col2 = st.columns(2)
                     # download button
