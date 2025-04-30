@@ -1,4 +1,4 @@
-date,profile_id,longitude,latitude,upper_depth,lower_depth,country_name,BDFI33,BDFIOD,BDWSOD,CECPH7,CFGR,CFVO,CLAY,ECEC,ELCO20,ELCOSP,NITKJD,ORGC,PHAQ,PHCA,PHETB1,PHKC,PHNF,PHPRTN,SAND,SILT,TCEQ,TOTC,WG0006,WG0010,WG0033,WG0200,WG1500
+date,profile_id,longitude,latitude,upper_depth,lower_depth,country_name,bdfi33,bdfiod,bdwsod,cecph7,cfgr,cfvo,clay,ecec,elco20,elcosp,nitkjd,orgc,phaq,phca,phetb1,phkc,phnf,phprtn,sand,silt,tceq,totc,wg0006,wg0010,wg0033,wg0200,wg1500
 1964-??-??,1239928,-90.73190307617188,18.61520004272461,0,4,Mexico,,,,,,,,,,,,46.3,,,,,,,30.0,21.0,,,,,,,
 1964-??-??,1239928,-90.73190307617188,18.61520004272461,4,30,Mexico,,1.02,,,,,,,,,,24.3,,,,,,,28.0,26.0,,,,,,,
 1964-??-??,1309540,-90.73190307617188,18.61520004272461,0,3,Mexico,,,,,,,,,,,,88.6,,,,,,,,,,,,,,,
