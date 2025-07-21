@@ -1,6 +1,7 @@
 /.venv/
 /notebooks/
 /data/
+/models/
 /outputs/
 /test_models/
 __pycache__/
