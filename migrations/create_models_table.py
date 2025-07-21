@@ -18,12 +18,22 @@ if db_type == 'mysql':
         `title` VARCHAR(100) NOT NULL,
         `description` TEXT NULL,
         `model_type` VARCHAR(100) NOT NULL,
-        `features` JSON NOT NULL,
         `target` VARCHAR(100) NOT NULL,
+        `feature_columns` JSON NOT NULL,
+        `categorical_features` JSON NULL,
+        `numeric_features` JSON NULL,
         `metrics` JSON NULL,
-        `path` TEXT NOT NULL,
-        `last_updated` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        PRIMARY KEY (`id`)
+        `pipeline_path` TEXT NOT NULL,
+        `training_config` JSON NULL,
+        `data_shape` JSON NULL,
+        `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        `version` VARCHAR(50) DEFAULT '1.0',
+        `is_active` BOOLEAN DEFAULT TRUE,
+        PRIMARY KEY (`id`),
+        INDEX `idx_model_type` (`model_type`),
+        INDEX `idx_target` (`target`),
+        INDEX `idx_active` (`is_active`)
     );
     """
 elif db_type == 'postgresql':
@@ -33,12 +43,27 @@ elif db_type == 'postgresql':
         title VARCHAR(100) NOT NULL,
         description TEXT NULL,
         model_type VARCHAR(100) NOT NULL,
-        features JSONB NOT NULL,
         target VARCHAR(100) NOT NULL,
+        feature_columns JSONB NOT NULL,
+        categorical_features JSONB NULL,
+        numeric_features JSONB NULL,
         metrics JSONB NULL,
-        path TEXT NOT NULL,
-        last_updated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        pipeline_path TEXT NOT NULL,
+        training_config JSONB NULL,
+        data_shape JSONB NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        version VARCHAR(50) DEFAULT '1.0',
+        is_active BOOLEAN DEFAULT TRUE
     );
+    CREATE INDEX IF NOT EXISTS idx_model_type ON models(model_type);
+    CREATE INDEX IF NOT EXISTS idx_target ON models(target);
+    CREATE INDEX IF NOT EXISTS idx_active ON models(is_active);
     """
-db.create(query)
-db.close()
+try:
+    db.create(query)
+    print(f"{db_type.capitalize()} models table created successfully")
+except Exception as e:
+    print(f"Failed to create {db_type.capitalize()} models table: {str(e)}")
+finally:
+    db.close()

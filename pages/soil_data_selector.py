@@ -6,14 +6,27 @@ from typing import Optional, List, Tuple, Dict
 import logging
 from utils.sidebar_menu import sidebar
 from utils.helper import filter_by_country, replace_invalid_dates
+import kagglehub
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+try:
+    path = kagglehub.dataset_download("itsmrmallik/wosis-2023-december")
+    if path:
+        WOSIS_DEC_2023_PATH = os.path.join(path, "wosis_202312.gpkg")
+        logger.info(f"Dataset downloaded successfully to {WOSIS_DEC_2023_PATH}")
+    else:
+        st.error("Failed to download dataset. Please check your Kaggle API credentials.")
+except kagglehub.KaggleHubError as e:
+    logger.error(f"Failed to download dataset: {e}")
+    st.error("Failed to download dataset. Please check your Kaggle API credentials.")        
+except Exception as e:
+    logger.error(f"Failed to download dataset: {e}")
 
 # Define constants
-WOSIS_DEC_2023_PATH = "./data/WoSIS_2023_December/wosis_202312.gpkg"
+# WOSIS_DEC_2023_PATH = "./data/WoSIS_2023_December/wosis_202312.gpkg"
 PREFIX_LAYER_NAME = "wosis_202312_"
 OUTPUT_PATH = "../outputs/"
 DEFAULT_LAYERS = ["bdfiad", "bdfiod", "bdwsod", "cecph7", "cecph8", "cfvo", "clay", "ecec", "elco50", "nitkjd", "orgc", "orgm", 

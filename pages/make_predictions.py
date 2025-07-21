@@ -1,348 +1,499 @@
 import streamlit as st
 from utils.sidebar_menu import sidebar
+from utils.pipeline_manager import load_pipelines_from_db, calculate_pipeline_confidence, validate_pipeline_input
+from utils.helper import folium_map
 from config.database import get_db
 from dotenv import load_dotenv
-import os, json, joblib
+import os
+import json
+import joblib
 import pandas as pd
-from utils.helper import calculate_confidence_score, folium_map, calculate_horizon_fractions, calculate_SOC_stocks
-import matplotlib.pyplot as plt
-import geopandas as gpd
-import utils.grids as grids
-import folium
 import numpy as np
+import matplotlib.pyplot as plt
+import folium
 
 load_dotenv()
 
-CATEGORICAL_FEATURES = ["landcover", "zone_number"]
+# Database setup
+db_type = os.getenv('DB_TYPE')
+if not db_type:
+    st.error("DB_TYPE environment variable not set")
+    st.stop()
 
-def load_models():
-    query = "SELECT * FROM models order by last_updated desc"
-    models = DB.fetchAllAsDict(query)
-    return models
+DB = get_db(db_type)
 
-def select_model():
-    models = load_models()
-    model_list = {}
-    for model in models:
-        if not os.path.exists(model['path']):
-            continue
 
-        model_list[f"{model['title']} ({model['model_type']}) - {model['last_updated']}"] = model
+@st.cache_data(ttl=600)
+def load_available_pipelines():
+    """Load and cache available pipeline models"""
+    try:
+        pipelines = load_pipelines_from_db(DB)
+        return [p for p in pipelines if os.path.exists(p['pipeline_path'])]
+    except Exception as e:
+        st.error(f"Error loading pipelines: {str(e)}")
+        return []
+
+
+def create_pipeline_selector():
+    """Create model selection interface"""
+    pipelines = load_available_pipelines()
     
-    # empty model_list
-    if not model_list:
-        st.error("No models found")
-        st.stop()
-
-    model_name = st.selectbox("Select a model", list(model_list.keys()), index=0)
-    selected_model = model_list[model_name]
-    model_path = selected_model["path"]
-    
-    if os.path.exists(model_path):
-        model = joblib.load(model_path)
-        if isinstance(model, dict) and 'features' in model:
-            print(model['features'])
-            return model, selected_model
-        else:
-            st.error("Invalid model format. 'features' key not found.")
-            st.stop()
-    else:
-        st.error(f"Model file not found at: {model_path}")
+    if not pipelines:
+        st.error("No trained pipelines found. Please train a model first.")
         st.stop()
     
-def preprocess_data(dataset, model):
-    model_features = model['features']
-    encoder = model['encoder']
+    # Create display options
+    display_options = {}
+    for pipeline in pipelines:
+        display_name = f"{pipeline['title']} ({pipeline['model_type']}) - {pipeline['target']}"
+        if pipeline.get('updated_at'):
+            display_name += f" - {pipeline['updated_at']}"
+        display_options[display_name] = pipeline
+    
+    selected_display = st.selectbox(
+        "Select Trained Pipeline",
+        options=list(display_options.keys()),
+        help="Choose a previously trained model pipeline for predictions"
+    )
+    
+    return display_options[selected_display]
 
-    # check if the dataset has the same columns as the training dataset
-    missing_cols = set(model_features) - set(dataset.columns)
-    if missing_cols:
-        st.error(f"The dataset is missing the following columns: {', '.join(missing_cols)}")
 
-        add_missing_cols = st.button("Add missing columns", help="Click to add missing columns to the dataset with 0 values.", key="add_missing_cols")
+def load_pipeline_model(pipeline_path: str):
+    """Load pipeline model from file"""
+    try:
+        if not os.path.exists(pipeline_path):
+            raise FileNotFoundError(f"Pipeline file not found: {pipeline_path}")
+        
+        pipeline_data = joblib.load(pipeline_path)
+        
+        # Handle both old and new format
+        if 'pipeline' in pipeline_data:
+            return pipeline_data
+        else:
+            # Old format compatibility
+            st.warning("Loading legacy model format. Consider retraining for better performance.")
+            return {
+                'pipeline': pipeline_data.get('model'),
+                'feature_columns': pipeline_data.get('features', []),
+                'target_column': pipeline_data.get('target', {}).get('name', 'unknown'),
+                'model_name': 'Legacy Model'
+            }
+    
+    except Exception as e:
+        st.error(f"Error loading pipeline: {str(e)}")
+        st.stop()
 
-        if add_missing_cols:
-            for col in missing_cols:
-                dataset[col] = 0
+
+def generate_template_dataset(pipeline_metadata: dict) -> pd.DataFrame:
+    """Generate template dataset for user download"""
+    feature_columns = json.loads(pipeline_metadata['feature_columns']) if isinstance(
+        pipeline_metadata['feature_columns'], str) else pipeline_metadata['feature_columns']
+    
+    # Add coordinate columns for spatial data
+    template_columns = ['latitude', 'longitude'] + feature_columns
+    
+    return pd.DataFrame(columns=template_columns)
+
+
+def validate_prediction_data(df: pd.DataFrame, pipeline_data: dict) -> pd.DataFrame:
+    """Validate and prepare data for prediction"""
+    
+    # Check pipeline compatibility
+    is_valid, missing_features = validate_pipeline_input(df, pipeline_data)
+    
+    if not is_valid:
+        st.error(f"Dataset missing required features: {', '.join(missing_features)}")
+        
+        if st.button("Add Missing Features (filled with zeros)", 
+                     help="Add missing columns with zero values to proceed"):
+            for feature in missing_features:
+                df[feature] = 0
+            st.success("Missing features added. Please review and update values if needed.")
+            st.rerun()
         else:
             st.stop()
-
-    if set(CATEGORICAL_FEATURES).issubset(dataset.columns):
-        encoded_cols = encoder.fit_transform(dataset[CATEGORICAL_FEATURES])
-        encoded_df = pd.DataFrame(encoded_cols, columns=encoder.get_feature_names_out(CATEGORICAL_FEATURES))
-        df = dataset.drop(columns=CATEGORICAL_FEATURES)
-        return pd.concat([df, encoded_df], axis=1)
-
-    return dataset
-
-@st.cache_data
-def project_grids(country, cell_data):
     
-    world = gpd.read_file('assets/shapefiles/World_Countries_(Generalized)/World_Countries_Generalized.shp')
-
-    # Ensure the shapefile is in WGS 84
-    if world.crs != 'EPSG:6372':
-        world = world.to_crs(epsg=6372)
-
-    country = world[world['COUNTRY'] == country]
+    # Handle data types properly
+    categorical_features = ['landcover', 'zone_number']
     
-    # list of cell_id and what colour they should be
-    # cell_colours = {(82, 280):'red'}
+    for col in df.columns:
+        if col in categorical_features:
+            # Ensure categorical columns are strings
+            df[col] = df[col].astype(str)
+        elif col not in ['latitude', 'longitude']:
+            # For numeric columns, convert to numeric and handle errors
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    
+    # Handle missing values after type conversion
+    if df.isnull().any().any():
+        null_cols = df.columns[df.isnull().any()].tolist()
+        st.warning(f"Missing values detected in: {', '.join(null_cols)}")
+        
+        fill_method = st.radio(
+            "How to handle missing values?",
+            ["Fill with column means", "Fill with zeros", "Stop and fix manually"],
+            index=0
+        )
+        
+        if fill_method == "Fill with column means":
+            # Fill numeric columns with means, categorical with mode
+            for col in df.columns:
+                if col in categorical_features:
+                    # Fill categorical with most common value
+                    if df[col].isnull().any():
+                        mode_val = df[col].mode().iloc[0] if not df[col].mode().empty else 'unknown'
+                        df[col] = df[col].fillna(mode_val)
+                else:
+                    # Fill numeric with mean
+                    if df[col].dtype in ['int64', 'float64'] and df[col].isnull().any():
+                        df[col] = df[col].fillna(df[col].mean())
+        elif fill_method == "Fill with zeros":
+            # Fill with appropriate defaults
+            for col in df.columns:
+                if col in categorical_features:
+                    df[col] = df[col].fillna('unknown')
+                else:
+                    df[col] = df[col].fillna(0)
+        else:
+            st.stop()
+    
+    return df
 
-    fig, ax = grids.create_visuals(country, cell_colours=cell_data, cell_size=10000)
 
-    return fig, ax
+def make_predictions(pipeline_data: dict, df: pd.DataFrame) -> tuple:
+    """Make predictions using the pipeline"""
+    try:
+        pipeline = pipeline_data['pipeline']
+        feature_columns = pipeline_data['feature_columns']
+        
+        # Select features for prediction
+        X = df[feature_columns].copy()
+        
+        # Ensure categorical columns are strings and numeric columns are numeric
+        categorical_features = ['landcover', 'zone_number']  # Default categorical features
+        
+        for col in X.columns:
+            if col in categorical_features:
+                # Convert categorical to string
+                X[col] = X[col].astype(str)
+            else:
+                # Convert numeric columns to float, handling any non-numeric values
+                X[col] = pd.to_numeric(X[col], errors='coerce')
+        
+        # Fill any remaining NaN values that might have been created during conversion
+        X = X.fillna(0)
+        
+        # Make predictions
+        predictions = pipeline.predict(X)
+        
+        # Calculate confidence
+        confidence = calculate_pipeline_confidence(pipeline, X)
+        
+        return predictions, confidence
+        
+    except Exception as e:
+        st.error(f"Prediction error: {str(e)}")
+        st.exception(e)
+        st.stop()
 
-@st.cache_data
-def init_grids(dataset):
-    df_with_grids = grids.get_grid_cell_dataset(dataset)
-    return df_with_grids
+
+def display_prediction_results(df: pd.DataFrame, predictions: np.ndarray, 
+                             target_column: str, confidence: float):
+    """Display prediction results with visualizations"""
+    
+    predicted_column = f"{target_column}_predicted"
+    df[predicted_column] = predictions
+    
+    # Results summary
+    st.subheader("Prediction Results")
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total Predictions", len(predictions))
+    with col2:
+        st.metric("Mean Predicted Value", f"{np.mean(predictions):.4f}")
+    with col3:
+        st.metric("Model Confidence", f"{confidence:.2f}")
+    
+    # Show detailed results
+    st.dataframe(df, use_container_width=True)
+    
+    # Performance comparison if ground truth available
+    if target_column in df.columns:
+        st.subheader("Model Performance on Test Data")
+        
+        actual_values = df[target_column]
+        
+        # Calculate metrics
+        mse = np.mean((actual_values - predictions) ** 2)
+        mae = np.mean(np.abs(actual_values - predictions))
+        r2 = np.corrcoef(actual_values, predictions)[0, 1] ** 2
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Mean Squared Error", f"{mse:.4f}")
+        with col2:
+            st.metric("Mean Absolute Error", f"{mae:.4f}")
+        with col3:
+            st.metric("R² Score", f"{r2:.4f}")
+        
+        # Scatter plot
+        fig, ax = plt.subplots(figsize=(10, 6))
+        ax.scatter(actual_values, predictions, alpha=0.7, edgecolors='k')
+        ax.plot([actual_values.min(), actual_values.max()], 
+                [actual_values.min(), actual_values.max()], 'r--')
+        ax.set_xlabel(f'Actual {target_column}')
+        ax.set_ylabel(f'Predicted {target_column}')
+        ax.set_title('Predictions vs Actual Values')
+        st.pyplot(fig)
+        plt.close()
+    
+    return df
+
+
+def create_spatial_visualization(df: pd.DataFrame, predicted_column: str):
+    """Create spatial visualization of predictions"""
+    
+    required_cols = ['latitude', 'longitude']
+    if not all(col in df.columns for col in required_cols):
+        st.warning("Latitude and longitude columns required for spatial visualization")
+        return
+    
+    st.subheader("Spatial Visualization")
+    
+    # Aggregation options
+    col1, col2 = st.columns(2)
+    with col1:
+        aggregate_data = st.checkbox("Aggregate by location", value=True,
+                                   help="Average predictions for same coordinates")
+    
+    visualization_df = df.copy()
+    
+    if aggregate_data:
+        # Aggregate predictions by coordinates
+        agg_df = visualization_df.groupby(['latitude', 'longitude'])[predicted_column].agg([
+            'mean', 'count', 'std'
+        ]).reset_index()
+        agg_df.columns = ['latitude', 'longitude', f'{predicted_column}_mean', 'count', 'std']
+        visualization_df = agg_df
+        predicted_column = f'{predicted_column}_mean'
+    
+    with col2:
+        if not aggregate_data and 'upper_depth' in df.columns and 'lower_depth' in df.columns:
+            # Depth filtering for non-aggregated data
+            upper_depth = st.number_input("Upper depth (cm)", min_value=0, max_value=100, value=0)
+            lower_depth = st.number_input("Lower depth (cm)", min_value=0, max_value=100, value=30)
+            
+            visualization_df = visualization_df[
+                (visualization_df['upper_depth'] >= upper_depth) & 
+                (visualization_df['lower_depth'] <= lower_depth)
+            ]
+    
+    if len(visualization_df) == 0:
+        st.warning("No data available for visualization with current filters")
+        return
+    
+    # Create visualizations
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Heatmap
+        st.write("**Prediction Heatmap**")
+        try:
+            heatmap = folium_map(visualization_df, predicted_column)
+            st.components.v1.html(heatmap._repr_html_(), height=400)
+        except Exception as e:
+            st.error(f"Error creating heatmap: {str(e)}")
+    
+    with col2:
+        # Point map
+        st.write("**Individual Predictions**")
+        try:
+            center_lat = visualization_df['latitude'].mean()
+            center_lon = visualization_df['longitude'].mean()
+            
+            point_map = folium.Map(location=[center_lat, center_lon], zoom_start=6)
+            
+            for _, row in visualization_df.head(1000).iterrows():  # Limit for performance
+                folium.CircleMarker(
+                    location=[row['latitude'], row['longitude']],
+                    radius=5,
+                    color='red',
+                    fill=True,
+                    fillColor='blue',
+                    fillOpacity=0.6,
+                    popup=f"{predicted_column}: {row[predicted_column]:.3f}"
+                ).add_to(point_map)
+            
+            st.components.v1.html(point_map._repr_html_(), height=400)
+        except Exception as e:
+            st.error(f"Error creating point map: {str(e)}")
+
+
+def create_download_options(df: pd.DataFrame, pipeline_metadata: dict):
+    """Create download options for results"""
+    
+    st.subheader("Download Results")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # CSV download
+        csv = df.to_csv(index=False)
+        st.download_button(
+            label="Download Predictions (CSV)",
+            data=csv,
+            file_name=f"predictions_{pipeline_metadata['title']}.csv",
+            mime="text/csv"
+        )
+    
+    with col2:
+        # Summary report
+        summary = {
+            "model_info": {
+                "title": pipeline_metadata['title'],
+                "model_type": pipeline_metadata['model_type'],
+                "target": pipeline_metadata['target']
+            },
+            "prediction_stats": {
+                "count": len(df),
+                "mean": float(df.iloc[:, -1].mean()) if len(df) > 0 else 0,
+                "std": float(df.iloc[:, -1].std()) if len(df) > 0 else 0,
+                "min": float(df.iloc[:, -1].min()) if len(df) > 0 else 0,
+                "max": float(df.iloc[:, -1].max()) if len(df) > 0 else 0
+            }
+        }
+        
+        st.download_button(
+            label="Download Summary (JSON)",
+            data=json.dumps(summary, indent=2),
+            file_name=f"prediction_summary_{pipeline_metadata['title']}.json",
+            mime="application/json"
+        )
+
 
 def show():
-
-    st.header("Prediction tool")
-
-    with st.expander("About"):
-        st.write("""
-                This tool allows users to load predictive models, upload test datasets, and visualize spatial data.
-                Follow the steps below to generate and analyze predictions.
-             
-                Step 1: Load a predictive model
-                - Select a model from the dropdown menu
-                
-                Step 2: Upload a test dataset
-                - Click 'Upload Dataset' to upload a test dataset
-                - Click 'Predict' to generate predictions
-
-                Step 3: Visualize predictions
-                - Click 'Visualize' to visualize the predictions
-                - Click 'Download' to download the predictions
-                """)
-
-    model, selected_model = select_model()
+    """Main prediction application"""
     
-    with st.spinner("Loading model..."):
-        if model:
-            scaler = model['scaler']
-            if isinstance(selected_model['features'], str):
-                model_features = json.loads(selected_model['features'])
-            else:
-                model_features = selected_model['features']
-            model_target = selected_model['target']
-            predicted_column = f'{model_target}_predicted'
-
-            col_names = ['date', 'latitude', 'longitude']
-            col_names.extend(model_features)
-
-            st.write(f"Selected model: {selected_model['title']}")
-            if selected_model['description'] is not None:
-                st.write(f"{selected_model['description']}")
-            # Upload a test dataset
-            st.write(f"The test dataset should have the following columns: \n{', '.join(col_names)}.")
-            st.write("You can download a template dataset from the link below:")
-
-            with st.spinner("Generating template..."):
-                test_dataset_template = pd.DataFrame(columns=col_names)
-                # save the template to a file
-                os.makedirs('assets/templates', exist_ok=True)
-                test_dataset_template.to_csv('assets/templates/test_dataset_template.csv', index=False)
-            
-                with open('assets/templates/test_dataset_template.csv', 'rb') as f:
-                    csv_bytes = f.read()
+    st.header("Enhanced Prediction System")
+    
+    with st.expander("About Pipeline Predictions"):
+        st.markdown("""
+        ### Enhanced Prediction Features
+        
+        This updated prediction system uses **scikit-learn pipelines** for:
+        - **Consistent preprocessing**: Same transformations as training
+        - **Simplified workflow**: Single pipeline handles all steps
+        - **Better reliability**: Reduced chance of preprocessing errors
+        - **Enhanced visualization**: Improved spatial mapping and analysis
+        
+        **Key Improvements:**
+        - Pipeline-based architecture for consistency
+        - Better error handling and validation
+        - Enhanced spatial visualization options  
+        - Comprehensive result analysis
+        - Multiple download formats
+        """)
+    
+    # Model selection
+    st.subheader("Select Trained Model")
+    selected_pipeline = create_pipeline_selector()
+    
+    # Load pipeline
+    with st.spinner("Loading pipeline..."):
+        pipeline_data = load_pipeline_model(selected_pipeline['pipeline_path'])
+        
+        st.success(f"Loaded: {selected_pipeline['title']} ({selected_pipeline['model_type']})")
+        
+        # Display model info
+        col1, col2 = st.columns(2)
+        with col1:
+            st.write(f"**Target Variable:** {selected_pipeline['target']}")
+            feature_count = len(json.loads(selected_pipeline['feature_columns']))
+            st.write(f"**Features:** {feature_count}")
+        with col2:
+            if selected_pipeline.get('metrics'):
+                metrics = json.loads(selected_pipeline['metrics'])
+                st.write(f"**Training MAE:** {metrics.get('mae', 'N/A'):.4f}")
+                st.write(f"**Training R²:** {metrics.get('r2', 'N/A'):.4f}")
+    
+    # Template generation
+    st.subheader("Data Requirements")
+    
+    with st.spinner("Generating template..."):
+        template_df = generate_template_dataset(selected_pipeline)
+        
+        st.write("**Required columns for prediction:**")
+        st.write(", ".join(template_df.columns))
+        
+        # Template download
+        template_csv = template_df.to_csv(index=False)
+        st.download_button(
+            label="Download Template Dataset",
+            data=template_csv,
+            file_name="prediction_template.csv",
+            mime="text/csv",
+            help="Download a template with required column structure"
+        )
+    
+    # File upload
+    st.subheader("Upload Prediction Data")
+    uploaded_file = st.file_uploader(
+        "Choose prediction dataset",
+        type=["csv", "xlsx"],
+        help="Upload data following the template structure"
+    )
+    
+    if uploaded_file:
+        try:
+            # Load data
+            with st.spinner("Loading prediction dataset..."):
+                if uploaded_file.type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+                    prediction_df = pd.read_excel(uploaded_file)
+                else:
+                    prediction_df = pd.read_csv(uploaded_file)
                 
-                    st.download_button(
-                        label="Dataset Template",
-                        data=csv_bytes,
-                        file_name=f"test_dataset_template.csv",
-                        mime="text/csv"
-                    )
+                st.success(f"Loaded {len(prediction_df):,} rows for prediction")
+                
+                # Preview data
+                with st.expander("Preview Dataset"):
+                    st.dataframe(prediction_df.head(), use_container_width=True)
+            
+            # Validate data
+            st.subheader("Data Validation")
+            validated_df = validate_prediction_data(prediction_df, pipeline_data)
+            
+            # Make predictions
+            st.subheader("Making Predictions")
+            with st.spinner("Generating predictions..."):
+                predictions, confidence = make_predictions(pipeline_data, validated_df)
+                
+                st.success(f"Generated {len(predictions):,} predictions")
+            
+            # Display results
+            results_df = display_prediction_results(
+                validated_df, predictions, 
+                selected_pipeline['target'], confidence
+            )
+            
+            # Spatial visualization
+            if 'latitude' in results_df.columns and 'longitude' in results_df.columns:
+                create_spatial_visualization(
+                    results_df, f"{selected_pipeline['target']}_predicted"
+                )
+            
+            # Download options
+            create_download_options(results_df, selected_pipeline)
+            
+        except Exception as e:
+            st.error(f"Error processing predictions: {str(e)}")
+            st.exception(e)
+    
+    else:
+        st.info("Upload a prediction dataset to begin")
 
-            uploaded_file = st.file_uploader("Upload a test dataset", type=["csv", "xlsx"])
-            if uploaded_file:
-                st.write(f"Uploaded file: {uploaded_file.name}")
-                try:
-                    if uploaded_file.type == "text/csv":
-                        dataset = pd.read_csv(uploaded_file)
-                    elif uploaded_file.type == "text/xlsx":
-                        dataset = pd.read_excel(uploaded_file)
-                    else:
-                        st.error("Invalid file type. Please upload a CSV or Excel file.")
-                        return
-                    
-                    with st.spinner("Pre-processing data..."):
-                        dataset = preprocess_data(dataset, model)
-
-                        st.subheader("Dataset:")
-                        st.write("The pre-processsed dataset is shown below")
-                        st.dataframe(dataset)
-
-                    with st.spinner("Predicting values..."):
-                        # make predictions
-                        model_features = model['model_features']
-                        X = dataset[model_features] #  use prediction features
-                        
-                        # st.write("Preview of the dataset being used for prediction.")
-                        # st.dataframe(X, use_container_width=True)
-
-                        # Check for missing values in the dataset
-                        if X.isnull().any().any():
-                            missing_cols = X.columns[X.isnull().any()].tolist()
-                            st.error(f"The dataset has missing values in the following columns: {', '.join(missing_cols)}. Please check the dataset and try again OR fill the missing values by clicking the button below.")
-                            if st.button("Fill Missing Values", help="Click to fill missing values with column means and continue with predictions."):
-                                X.fillna(X.mean(), inplace=True)
-                            else:
-                                st.stop()
-
-                        ML_MODEL = model['model']
-                        X_scaled = scaler.transform(X)
-
-                        # st.write("Preview of the datased being used for prediction.")
-                        # st.dataframe(X_scaled, use_container_width=True)
-
-                        predictions = ML_MODEL.predict(X_scaled)
-
-                        # add predictions to the dataset
-                        dataset[predicted_column] = predictions
-                        
-                        # calculate the fractions of the upper and lower depths
-                        # dataset['depths_fractions'] = calculate_horizon_fractions(dataset['upper_depth'], dataset['lower_depth'])
-                        # rock fragment volume
-                        # dataset['rock_fragment_volume'] = np.random.uniform(1, 2, size=len(dataset)) # need to get this from the dataset
-
-                        # calculate the SOC stocks for each row
-                        # dataset['SOC_stocks_t/ha'] = dataset.apply(lambda row: calculate_SOC_stocks(
-                        #     row['depths_fractions'],
-                        #     row['bulk_density'],
-                        #     row[predicted_column],
-                        #     row['rock_fragment_volume']
-                        # ), axis=1)
-
-                        # convert the units and store in a new column
-                        # dataset[f'{model_target}_t/ha'] = dataset[predicted_column] * 100
-
-                        st.subheader("Predictions:")
-                        st.write(f"The predictions for {model_target} are shown below")
-                        st.dataframe(dataset)
-
-                        confidence = calculate_confidence_score(ML_MODEL, X)
-                        st.write(f"Model confidence score: {confidence:.2f}")
-                        st.write("Output Score Range: Between 0 and 1 (higher = more confident)")
-
-                    # if the dataset has the target column plot the predictions vs the target
-                    if model_target in dataset.columns:
-                        test_column = dataset[model_target]
-                        st.subheader("Predictions vs Target:")
-                        plt.figure(figsize=(10, 6))
-                        plt.scatter(test_column, predictions, alpha=0.7, edgecolors='k')
-                        plt.plot([test_column.min(), test_column.max()], [test_column.min(), test_column.max()], 'r--')
-                        plt.xlabel(f'Actual {model_target}')
-                        plt.ylabel(f'Predicted {model_target}')
-                        st.pyplot(plt)
-                        plt.close()
-
-                    #     st.subheader("Acctuals and Predictions:")
-                    #     st.dataframe(dataset[['date', model_target, f'{model_target}_predicted']])
-
-                    # get unique upper_depth
-                    
-                    depth_profile_columns = ['latitude', 'longitude', 'upper_depth', 'lower_depth']
-                    if set(depth_profile_columns).issubset(dataset.columns):
-                        with st.spinner("Generating depth profile and visualization..."):
-                            st.subheader("Depth Profile and Visualization")
-                            soil_ranges = [
-                                "0-5cm",
-                                "5-15cm",
-                                "15-30cm"
-                            ]
-
-                            col1, col2 = st.columns(2, gap="small", vertical_alignment="bottom")
-                            with col1:
-                                aggregate = st.checkbox("Aggregate", help="Aggregate the predictions by latitude and longitude ignoring the upper and lower depths", value=True)
-                            with col2:
-                                if not aggregate:
-                                    col1, col2 = st.columns(2, gap="small", vertical_alignment="bottom")
-                                    with col1:
-                                        upper_depth = st.number_input("Upper depth (in cm)", min_value=0, max_value=100, value=5)
-                                    with col2:
-                                        lower_depth = st.number_input("Lower depth (in cm)", min_value=0, max_value=100, value=15)
-
-                            spatial_dataset = dataset.copy()
-
-                            if aggregate:
-                                # aggregate the predictions by latitude and longitude
-                                predicted_mean = predicted_column + '_mean'
-                                grouped = spatial_dataset.groupby(['latitude', 'longitude'])[predicted_column].mean().reset_index()
-                                spatial_dataset = spatial_dataset.merge(grouped, on=['latitude', 'longitude'], how='left', suffixes=('', '_mean'))
-                                spatial_dataset[predicted_column] = spatial_dataset[predicted_mean]
-                                spatial_dataset.drop(columns=[predicted_mean], inplace=True)
-
-                            else:
-                                # filter the dataset by the selected upper and lower depths
-                                # upper_depth = int(soil_depth.split('-')[0])
-                                # lower_depth = int(soil_depth.split('-')[1][:-2])  # Remove 'cm' suffix
-
-                                spatial_dataset = spatial_dataset[(spatial_dataset['lower_depth'] >= lower_depth) & (spatial_dataset['upper_depth'] <= upper_depth)]
-
-
-                        with st.spinner("Generating map..."):
-                            # generate a folium heatmap
-                            map = folium_map(spatial_dataset, predicted_column)
-                            st.write("Heatmap of the predictions for the selected depth profile or aggregated predictions")
-                            st.components.v1.html(map._repr_html_(), height=450)
-                        
-                        with st.spinner("Generating points..."):
-                            # map2
-                            map2 = folium.Map(location=[spatial_dataset['latitude'].mean(), spatial_dataset['longitude'].mean()], zoom_start=4)
-                            datapoints = folium.map.FeatureGroup()
-                            for index, row in spatial_dataset.iterrows():
-                                datapoints.add_child(
-                                    folium.features.CircleMarker(
-                                        [row['latitude'], row['longitude']],
-                                        radius=5,
-                                        color='red',
-                                        fill=True,
-                                        fill_color='blue',
-                                        fill_opacity=0.6,
-                                        popup=f"{predicted_column}: {row[predicted_column]:.2f}"
-                                    )
-                                )
-
-                            map2.add_child(datapoints)
-                            st.write("Points of the dataset")
-                            st.components.v1.html(map2._repr_html_(), height=450)
-                    
-                    # with st.spinner("Generating grids..."):
-                        # generate grids dataframe
-                        # df_with_grids = init_grids(dataset)                    
-                        # st.dataframe(df_with_grids)
-
-                        # Calculate mean predicted value for each grid cell
-                        # grid_means = df_with_grids.groupby('cell_id')[f'{model_target}_predicted'].mean()
-                        
-                        # Create color mapping using a colormap
-                        # norm = plt.Normalize(grid_means.min(), grid_means.max())
-                        # cmap = plt.cm.YlOrRd  # Yellow-Orange-Red colormap
-                        
-                        # Create dictionary mapping cell_ids to colors based on predicted values
-                        # cell_data = {cell_id: cmap(norm(value)) for cell_id, value in grid_means.items()}
-
-                        # fig, ax = project_grids(DEFAULT_COUNTRY, cell_data)
-                        # st.pyplot(fig)
-
-                except Exception as e:
-
-                    st.error(f"Error reading file: {str(e)}")
-                    return
 
 if __name__ == "__main__":
-
-
-    sidebar(title="Projections")    
-
-    db_type = os.getenv("DB_TYPE")
-    DB = get_db(db_type)
-
-    DEFAULT_COUNTRY = "Mexico"
-
-
+    sidebar(title="Enhanced Predictions")
     show()
